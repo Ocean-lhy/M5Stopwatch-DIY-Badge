@@ -2,14 +2,15 @@
   "name": "你的名字",
   "title": "职位",
   "company": "公司",
-  "intro": "一句话介绍：做什么、擅长什么、想聊什么。",
-  "seeking": "",
-  "booth": "",
   "tags": ["标签一", "标签二"],
   "email": "",
   "phone": "",
   "theme": "ocean",
   "timezone_offset_min": 480,
+  "brightness": 200,
+  "ambient_after_s": 45,
+  "scan_timeout_s": 30,
+  "rotation": 0,
   "qr": [
     { "label": "扫码加我", "text": "https://example.com" }
   ]

@@ -5,6 +5,7 @@
   const FONT = '"PingFang SC","HarmonyOS Sans SC","Noto Sans SC","Microsoft YaHei",-apple-system,"Segoe UI",sans-serif';
 
   // Keep in sync with main/ui_theme.h.
+  const labels = { name: '你的名字', noQr: '未设置二维码' };
   const THEMES = [
     { id: 0, name: '深海', bg: '#000000', ink: '#F2F6FA', muted: '#8A9BB0', accent: '#3BA7FF', glow: null },
     { id: 1, name: '品牌蓝', bg: '#032447', ink: '#FFFFFF', muted: '#A0C4E6', accent: '#7FD0FF', glow: 'rgba(8,122,193,.55)' },
@@ -118,7 +119,7 @@
     ctx.textBaseline = 'middle';
     drawAvatar(ctx, avatar, C, 150, 72, t);
 
-    const name = model.name || '你的名字';
+    const name = model.name || labels.name;
     fitFont(ctx, name, 340, 46, 26, 700);
     ctx.fillStyle = t.ink;
     ctx.fillText(name, C, 272);
@@ -248,7 +249,7 @@
     if (!slot || !drawQr(ctx, slot.text, C - 150, 64, 300)) {
       ctx.font = font(16);
       ctx.fillStyle = '#5a5a5a';
-      ctx.fillText('未设置二维码', C, 214);
+      ctx.fillText(labels.noQr, C, 214);
     }
     if (slot && slot.label) {
       ctx.font = font(24, 700);
@@ -326,5 +327,5 @@
     ctx.textAlign = 'center';
   }
 
-  window.Compose = { THEMES, SIZE: S, drawCard, drawAbout, drawNameStrip, drawScanPreview, drawAmbientPreview, drawStatusPreview };
+  window.Compose = { THEMES, labels, SIZE: S, drawCard, drawAbout, drawNameStrip, drawScanPreview, drawAmbientPreview, drawStatusPreview };
 })();

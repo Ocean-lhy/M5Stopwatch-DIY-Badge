@@ -1,9 +1,6 @@
 #include "input.h"
 
-#include <stdlib.h>
-
 #include "driver/gpio.h"
-#include "touch.h"
 
 namespace {
 
@@ -12,9 +9,6 @@ constexpr gpio_num_t kKeyA = GPIO_NUM_2;
 constexpr gpio_num_t kKeyB = GPIO_NUM_1;
 constexpr uint32_t kDebounceMs = 25;
 constexpr uint32_t kLongPressMs = 2000;
-constexpr int kSwipeMinPx = 70;
-constexpr int kTapMaxMovePx = 24;
-constexpr uint32_t kTapMaxMs = 600;
 
 struct Key {
     gpio_num_t pin;
@@ -26,14 +20,10 @@ struct Key {
 };
 
 Key s_keys[2] = {{kKeyA, false, false, 0, 0, false}, {kKeyB, false, false, 0, 0, false}};
-bool s_touch_ok = false;
-bool s_touching = false;
-uint32_t s_touch_start = 0;
-int s_start_x = 0, s_start_y = 0, s_last_x = 0, s_last_y = 0;
 
 } // namespace
 
-bool input_init(i2c_bus_handle_t bus)
+bool input_init()
 {
     gpio_config_t cfg = {
         .pin_bit_mask = (1ULL << kKeyA) | (1ULL << kKeyB),
@@ -43,8 +33,7 @@ bool input_init(i2c_bus_handle_t bus)
         .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&cfg);
-    s_touch_ok = touch_init(bus);
-    return s_touch_ok;
+    return true;
 }
 
 int input_poll(uint32_t now, ui::Input *out, int capacity)
@@ -74,29 +63,6 @@ int input_poll(uint32_t now, ui::Input *out, int capacity)
         if (i == 1 && k.stable && !k.long_fired && now - k.down_at >= kLongPressMs) {
             k.long_fired = true;
             emit(ui::Input::KeyBLong);
-        }
-    }
-
-    if (s_touch_ok) {
-        TouchEvent t = touch_poll();
-        if (t.down) {
-            if (!s_touching) {
-                s_touching = true;
-                s_touch_start = now;
-                s_start_x = t.x;
-                s_start_y = t.y;
-            }
-            s_last_x = t.x;
-            s_last_y = t.y;
-        } else if (s_touching) {
-            s_touching = false;
-            const int dx = s_last_x - s_start_x;
-            const int dy = s_last_y - s_start_y;
-            if (abs(dx) >= kSwipeMinPx && abs(dx) > abs(dy) * 3 / 2) {
-                emit(dx < 0 ? ui::Input::SwipeLeft : ui::Input::SwipeRight);
-            } else if (abs(dx) <= kTapMaxMovePx && abs(dy) <= kTapMaxMovePx && now - s_touch_start <= kTapMaxMs) {
-                emit(ui::Input::Tap);
-            }
         }
     }
     return n;

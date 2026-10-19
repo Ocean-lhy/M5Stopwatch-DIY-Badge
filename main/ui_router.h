@@ -34,6 +34,9 @@ public:
 
     // Advances timeouts and animations. Returns true when the screen must be redrawn.
     bool tick(uint32_t now);
+    // Call after a frame produced by tick() is on the glass; fade-ins start from here
+    // so the time spent drawing the new page is never visible.
+    void presented(uint32_t now);
     void fill(Frame &frame) const;
 
     Page page() const { return page_; }
@@ -41,10 +44,9 @@ public:
     uint8_t brightness() const { return brightness_; }
     bool want_portal() const { return page_ == Page::Setup || (anim_ == Anim::Dip && dip_target_ == Page::Setup); }
     Haptic take_haptic();
-    bool take_scan_event();
 
 private:
-    enum class Anim : uint8_t { None, Slide, ScanIn, Dip };
+    enum class Anim : uint8_t { None, Slide, Dip };
 
     void finish_anim(uint32_t now);
     void slide_to(Page target, int dir, uint32_t now);
@@ -64,6 +66,9 @@ private:
     Page from_ = Page::Card;
     Page dip_target_ = Page::Card;
     bool dip_switched_ = false;
+    bool dip_waiting_present_ = false;
+    uint32_t dip_switch_at_ = 0;
+    uint32_t dip_in_start_ = 0;
     uint16_t dip_out_ms_ = 0;
     uint16_t dip_in_ms_ = 0;
     int slide_dir_ = 1;
@@ -79,7 +84,6 @@ private:
     int qr_index_ = 0;
     uint32_t last_key_ = 0xFFFFFFFF;
     Haptic haptic_ = Haptic::None;
-    bool scan_event_ = false;
 };
 
 } // namespace ui

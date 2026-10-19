@@ -69,6 +69,24 @@ def load(source: Path) -> dict:
             fail(path, f"qr[{i}] label must be < {QR_LABEL_MAX} bytes and text < {QR_TEXT_MAX} bytes")
     data["qr"] = qr
     data["tz"] = int(data.get("timezone_offset_min", 480))
+
+    def bounded(key, default, lo, hi, zero_ok=False):
+        try:
+            value = int(data.get(key, default))
+        except (TypeError, ValueError):
+            fail(path, f'"{key}" must be an integer')
+        if zero_ok and value == 0:
+            return 0
+        if value < lo or value > hi:
+            allowed = f"0 or {lo}..{hi}" if zero_ok else f"{lo}..{hi}"
+            fail(path, f'"{key}" is {value}, allowed {allowed}')
+        return value
+
+    # Same ranges as the editor: brightness 40..255, idle 0 or 10..60 s, QR page 10..30 s, rotation 0..3.
+    data["brightness"] = bounded("brightness", 200, 40, 255)
+    data["ambient_after_s"] = bounded("ambient_after_s", 45, 10, 60, zero_ok=True)
+    data["scan_timeout_s"] = bounded("scan_timeout_s", 30, 10, 30)
+    data["rotation"] = bounded("rotation", 0, 0, 3)
     return data
 
 
@@ -103,6 +121,10 @@ def main():
     lines += [
         f"static constexpr int kProfileTheme = {data['theme']};",
         f"static constexpr int kProfileTzOffsetMin = {data['tz']};",
+        f"static constexpr int kProfileBrightness = {data['brightness']};",
+        f"static constexpr int kProfileAmbientAfterS = {data['ambient_after_s']};",
+        f"static constexpr int kProfileScanTimeoutS = {data['scan_timeout_s']};",
+        f"static constexpr int kProfileRotation = {data['rotation']};",
         f"static constexpr int kProfileQrCount = {len(data['qr'])};",
         "static constexpr const char *kProfileQr[][2] = {",
     ]

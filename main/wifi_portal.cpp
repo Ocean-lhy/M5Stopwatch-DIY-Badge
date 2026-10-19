@@ -15,12 +15,14 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_random.h"
+#include "esp_rom_crc.h"
 #include "esp_spiffs.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "layers.h"
+#include "nvs.h"
 #include "rtc_time.h"
 #include "web_assets.h"
 
@@ -116,6 +118,42 @@ static esp_err_t asset_handler(httpd_req_t *req)
     return httpd_resp_send(req, reinterpret_cast<const char *>(asset->data), asset->size);
 }
 
+// Set once the editor has been served this session. From then on connectivity probes
+// get the "online" answer, so the OS sign-in window can be closed without leaving the
+// network and the editor can be opened in a real browser (which can pick photos).
+static std::atomic<bool> g_editor_seen{false};
+
+struct ProbeAnswer {
+    const char *path;
+    const char *status;
+    const char *type;
+    const char *body;
+};
+
+static constexpr ProbeAnswer kProbeAnswers[] = {
+    {"/hotspot-detect.html", "200 OK", "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"},
+    {"/library/test/success.html", "200 OK", "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"},
+    {"/generate_204", "204 No Content", "text/plain", ""},
+    {"/gen_204", "204 No Content", "text/plain", ""},
+    {"/ncsi.txt", "200 OK", "text/plain", "Microsoft NCSI"},
+    {"/connecttest.txt", "200 OK", "text/plain", "Microsoft Connect Test"},
+    {"/success.txt", "200 OK", "text/plain", "success\n"},
+    {"/canonical.html", "200 OK", "text/html", "<meta http-equiv=\"refresh\" content=\"0;url=https://support.mozilla.org/kb/captive-portal\"/>"},
+};
+
+static esp_err_t redirect_handler(httpd_req_t *req);
+
+static esp_err_t probe_handler(httpd_req_t *req)
+{
+    if (!g_editor_seen) return redirect_handler(req);
+    touch_activity();
+    const auto *answer = static_cast<const ProbeAnswer *>(req->user_ctx);
+    httpd_resp_set_status(req, answer->status);
+    httpd_resp_set_type(req, answer->type);
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, answer->body, HTTPD_RESP_USE_STRLEN);
+}
+
 static esp_err_t redirect_handler(httpd_req_t *req)
 {
     touch_activity();
@@ -135,6 +173,7 @@ static esp_err_t not_found_handler(httpd_req_t *req, httpd_err_code_t)
 
 static esp_err_t state_handler(httpd_req_t *req)
 {
+    g_editor_seen = true;
     touch_activity();
     portal_lock();
     cJSON *root = badge_config_to_cjson(g_config);
@@ -143,7 +182,6 @@ static esp_err_t state_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(device, "battery", g_battery);
     cJSON_AddBoolToObject(device, "charging", g_charging);
     cJSON_AddNumberToObject(device, "runtime", g_runtime.load());
-    cJSON_AddNumberToObject(device, "scans", badge_scan_count());
     cJSON_AddStringToObject(device, "ssid", g_ssid);
     cJSON_AddStringToObject(device, "ip", kIp);
     cJSON_AddStringToObject(device, "version", kVersion);
@@ -354,6 +392,23 @@ static void new_password()
     strncat(g_wifi_qr, ";;", sizeof(g_wifi_qr) - strlen(g_wifi_qr) - 1);
 }
 
+// The editor shows the uploaded avatar when there is one. When a firmware build ships
+// a different default (profile/avatar.jpg), drop the old upload so the new one shows.
+static void forget_avatar_if_default_changed()
+{
+    const uint32_t crc = esp_rom_crc32_le(0, _binary_avatar_jpg_start, _binary_avatar_jpg_end - _binary_avatar_jpg_start);
+    nvs_handle_t handle = 0;
+    if (nvs_open("badge", NVS_READWRITE, &handle) != ESP_OK) return;
+    uint32_t stored = 0;
+    if (nvs_get_u32(handle, "avatar_crc", &stored) != ESP_OK || stored != crc) {
+        unlink(kAvatarPath);
+        nvs_set_u32(handle, "avatar_crc", crc);
+        nvs_commit(handle);
+        ESP_LOGI(TAG, "built-in avatar changed, using it as the editor default");
+    }
+    nvs_close(handle);
+}
+
 static void init_spiffs()
 {
     esp_vfs_spiffs_conf_t conf = {
@@ -369,6 +424,7 @@ static void init_spiffs()
         snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", t.path);
         unlink(tmp_path);
     }
+    forget_avatar_if_default_changed();
 }
 
 static void register_get(const char *uri, esp_err_t (*handler)(httpd_req_t *), void *ctx = nullptr)
@@ -405,11 +461,8 @@ static bool start_http()
     register_post("/api/time", time_handler);
     register_post("/api/assets", asset_upload_handler);
     register_post("/api/reset", reset_handler);
-    for (const char *path : {"/generate_204", "/gen_204", "/hotspot-detect.html", "/library/test/success.html",
-                             "/ncsi.txt", "/connecttest.txt", "/redirect", "/fwlink", "/canonical.html",
-                             "/success.txt"}) {
-        register_get(path, redirect_handler);
-    }
+    for (const auto &answer : kProbeAnswers) register_get(answer.path, probe_handler, (void *)&answer);
+    for (const char *path : {"/redirect", "/fwlink"}) register_get(path, redirect_handler);
     httpd_register_err_handler(g_server, HTTPD_404_NOT_FOUND, not_found_handler);
     return true;
 }
@@ -470,6 +523,7 @@ bool portal_start()
         return false;
     }
     g_stations = 0;
+    g_editor_seen = false;
     touch_activity();
     g_running = true;
     ESP_LOGI(TAG, "AP started: %s / %s", g_ssid, g_password);

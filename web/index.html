@@ -11,98 +11,92 @@
 <body>
   <header class="topbar">
     <div class="brand"><img src="/assets/m5logo.svg" alt="M5Stack"><span></span><strong>Badge Studio</strong></div>
-    <div class="conn" id="conn"><i></i><b id="connText">连接中</b></div>
+    <div class="top-actions">
+      <div class="conn" id="conn"><i></i><b id="connText">连接中</b></div>
+      <div class="seg small lang" id="lang" role="radiogroup" aria-label="Language">
+        <button type="button" role="radio" data-lang="zh" aria-checked="true">中文</button>
+        <button type="button" role="radio" data-lang="en" aria-checked="false">EN</button>
+      </div>
+    </div>
   </header>
 
   <main>
     <div class="layout">
       <aside class="preview">
-        <div class="bezel"><canvas id="preview" width="466" height="466" aria-label="胸牌屏幕预览"></canvas></div>
-        <div class="seg" id="previewTabs" role="tablist" aria-label="预览页面">
-          <button role="tab" data-view="card" aria-selected="true">名片</button>
-          <button role="tab" data-view="about" aria-selected="false">介绍</button>
-          <button role="tab" data-view="scan" aria-selected="false">扫码</button>
-          <button role="tab" data-view="ambient" aria-selected="false">待机</button>
+        <div class="bezel"><canvas id="preview" width="466" height="466" data-i18n-aria="previewAria" aria-label="胸牌屏幕预览"></canvas></div>
+        <div class="seg" id="previewTabs" role="tablist" data-i18n-aria="tabsAria" aria-label="预览页面">
+          <button role="tab" data-view="card" aria-selected="true" data-i18n="tabCard">名片</button>
+          <button role="tab" data-view="scan" aria-selected="false" data-i18n="tabScan">扫码</button>
+          <button role="tab" data-view="ambient" aria-selected="false" data-i18n="tabAmbient">待机</button>
         </div>
         <dl class="device">
-          <div><dt>电量</dt><dd id="devBattery">--</dd></div>
-          <div><dt>扫码页打开</dt><dd id="devScans">--</dd></div>
-          <div><dt>热点</dt><dd id="devSsid" class="mono">--</dd></div>
+          <div><dt data-i18n="battery">电量</dt><dd id="devBattery">--</dd></div>
+          <div><dt data-i18n="hotspot">热点</dt><dd id="devSsid" class="mono">--</dd></div>
         </dl>
       </aside>
 
       <div class="steps">
         <section class="step">
-          <header><span class="num">1</span><div><h2>名片信息</h2></div></header>
+          <header><span class="num">1</span><div><h2 data-i18n="cardInfo">名片信息</h2></div></header>
           <div class="grid">
-            <label class="wide">姓名<input id="name" maxlength="24" autocomplete="name" placeholder="姓名"></label>
-            <label>职位<input id="title" maxlength="24" placeholder="职位"></label>
-            <label>公司<input id="company" maxlength="24" placeholder="公司"></label>
-            <label class="wide">标签<input id="tags" maxlength="60" placeholder="逗号分隔，最多 3 个"></label>
+            <label class="wide"><span data-i18n="name">姓名</span><input id="name" maxlength="24" autocomplete="name" data-i18n-placeholder="namePh" placeholder="姓名"></label>
+            <label><span data-i18n="job">职位</span><input id="title" maxlength="24" data-i18n-placeholder="jobPh" placeholder="职位"></label>
+            <label><span data-i18n="company">公司</span><input id="company" maxlength="24" data-i18n-placeholder="companyPh" placeholder="公司"></label>
+            <label class="wide"><span data-i18n="tags">标签</span><input id="tags" maxlength="60" data-i18n-placeholder="tagsPh" placeholder="逗号分隔，最多 3 个"></label>
           </div>
         </section>
 
         <section class="step">
-          <header><span class="num">2</span><div><h2>头像</h2><p>拖动调整位置</p></div></header>
+          <header><span class="num">2</span><div><h2 data-i18n="avatar">头像</h2><p data-i18n="avatarHint">拖动调整位置</p></div></header>
           <div class="avatar-row">
-            <div class="cropper"><canvas id="crop" width="440" height="440" aria-label="头像裁剪"></canvas></div>
+            <div class="cropper"><canvas id="crop" width="440" height="440" data-i18n-aria="cropAria" aria-label="头像裁剪"></canvas></div>
             <div class="avatar-tools">
-              <label class="btn">选择照片<input id="avatarFile" type="file" accept="image/*"></label>
-              <label class="range">缩放<input id="zoom" type="range" min="1" max="3" step="0.01" value="1"></label>
+              <button id="avatarPick" class="btn" type="button" data-i18n="pickPhoto">选择照片</button>
+              <input id="avatarFile" class="file-input" type="file" accept="image/*">
+              <label class="range"><span data-i18n="zoom">缩放</span><input id="zoom" type="range" min="1" max="3" step="0.01" value="1"></label>
             </div>
           </div>
         </section>
 
         <section class="step">
-          <header><span class="num">3</span><div><h2>二维码</h2><p>选择二维码截图自动识别，最多 3 个</p></div></header>
+          <header><span class="num">3</span><div><h2 data-i18n="qr">二维码</h2><p data-i18n="qrHint">选择二维码截图自动识别，最多 3 个</p></div></header>
           <div id="slots" class="slots"></div>
           <div class="actions-row">
-            <button id="addSlot" class="ghost" type="button">添加二维码</button>
-            <button id="addVcard" class="ghost" type="button">生成联系人二维码</button>
+            <button id="addSlot" class="ghost" type="button" data-i18n="addQr">添加二维码</button>
+            <button id="addVcard" class="ghost" type="button" data-i18n="addVcard">生成联系人二维码</button>
           </div>
           <div class="grid">
-            <label>邮箱<input id="email" maxlength="60" inputmode="email" placeholder="name@company.com"></label>
-            <label>电话<input id="phone" maxlength="20" inputmode="tel" placeholder="可选"></label>
+            <label><span data-i18n="email">邮箱</span><input id="email" maxlength="60" inputmode="email" placeholder="name@company.com"></label>
+            <label><span data-i18n="phone">电话</span><input id="phone" maxlength="20" inputmode="tel" data-i18n-placeholder="phonePh" placeholder="可选"></label>
           </div>
-          <p class="notice">微信：我 → 个人资料 → 我的二维码 → “…” → 保存图片</p>
+          <p class="notice"><span data-i18n="wechatHint">微信：我 → 个人资料 → 我的二维码 → “…” → 保存图片</span></p>
         </section>
 
         <section class="step">
-          <header><span class="num">4</span><div><h2>介绍页</h2></div>
-            <label class="switch"><input id="about" type="checkbox" checked><span></span><em>启用</em></label></header>
-          <div class="grid">
-            <label class="wide">一句话介绍<textarea id="intro" maxlength="90" rows="3" placeholder=""></textarea></label>
-            <label class="wide">我在找<input id="seeking" maxlength="40" placeholder=""></label>
-            <label>展位号<input id="booth" maxlength="12" placeholder="B12"></label>
+          <header><span class="num">4</span><div><h2 data-i18n="look">外观</h2></div></header>
+          <div class="themes" id="themes" role="radiogroup" data-i18n-aria="themesAria" aria-label="主题"></div>
+          <label class="range"><span data-i18n="brightness">名片亮度</span> <output id="brightnessOut">200</output><input id="brightness" type="range" min="60" max="255" value="200"></label>
+          <div class="field">
+            <label class="range"><span data-i18n="ambient">进入待机</span> <output id="ambientOut">45 秒</output><input id="ambientAfter" type="range" min="10" max="60" value="45"></label>
+            <label class="switch"><input id="ambientNever" type="checkbox"><span></span><em data-i18n="never">从不</em></label>
           </div>
-        </section>
-
-        <section class="step">
-          <header><span class="num">5</span><div><h2>外观</h2></div></header>
-          <div class="themes" id="themes" role="radiogroup" aria-label="主题"></div>
-          <label class="range">名片亮度 <output id="brightnessOut">200</output><input id="brightness" type="range" min="60" max="255" value="200"></label>
-          <div class="field"><span class="label">进入待机</span>
-            <div class="seg small" id="ambientAfter">
-              <button type="button" data-v="30">30 秒</button><button type="button" data-v="45">45 秒</button><button type="button" data-v="90">90 秒</button><button type="button" data-v="0">从不</button>
+          <label class="range"><span data-i18n="scanBack">扫码页返回</span> <output id="scanOut">30 秒</output><input id="scanTimeout" type="range" min="10" max="30" value="30"></label>
+          <div class="field"><span class="label" data-i18n="rotation">屏幕方向</span>
+            <div class="seg small" id="rotation" role="radiogroup" data-i18n-aria="rotationAria" aria-label="屏幕方向">
+              <button type="button" data-v="0">0°</button><button type="button" data-v="1">90°</button><button type="button" data-v="2">180°</button><button type="button" data-v="3">270°</button>
             </div>
           </div>
-          <div class="field"><span class="label">扫码页返回</span>
-            <div class="seg small" id="scanTimeout">
-              <button type="button" data-v="20">20 秒</button><button type="button" data-v="30">30 秒</button><button type="button" data-v="60">60 秒</button>
-            </div>
-          </div>
-          <label class="switch line"><input id="touch" type="checkbox" checked><span></span><em>触摸操作</em></label>
         </section>
 
         <section class="guide">
-          <h2>按键</h2>
+          <h2 data-i18n="keys">按键</h2>
           <dl>
-            <div><dt><i class="key yellow"></i>黄键</dt><dd>扫码页 / 返回</dd></div>
-            <div><dt><i class="key blue"></i>蓝键</dt><dd>名片 / 介绍；扫码页切换二维码</dd></div>
-            <div><dt><i class="key blue"></i>长按蓝键 2 秒</dt><dd>设置模式</dd></div>
+            <div><dt><i class="key yellow"></i><span data-i18n="yellow">黄键</span></dt><dd data-i18n="yellowDo">扫码页 / 返回</dd></div>
+            <div><dt><i class="key blue"></i><span data-i18n="blue">蓝键</span></dt><dd data-i18n="blueDo">扫码页切换二维码</dd></div>
+            <div><dt><i class="key blue"></i><span data-i18n="blueLong">长按蓝键 2 秒</span></dt><dd data-i18n="blueLongDo">设置模式</dd></div>
           </dl>
-          <p class="muted">安卓认证窗口无法选图时，用浏览器打开 <b class="mono">192.168.4.1</b>。</p>
-          <button id="resetBtn" class="link-danger" type="button">恢复默认设置</button>
+          <p class="muted"><span data-i18n="androidHint">安卓认证窗口无法选图时，用浏览器打开</span> <b class="mono">192.168.4.1</b></p>
+          <button id="resetBtn" class="link-danger" type="button" data-i18n="reset">恢复默认设置</button>
         </section>
       </div>
     </div>
@@ -110,18 +104,18 @@
 
   <div class="publishbar">
     <div class="pub-status" id="pubStatus" aria-live="polite"></div>
-    <button id="publish" class="primary" type="button">发布到胸牌</button>
+    <button id="publish" class="primary" type="button" data-i18n="publish">发布到胸牌</button>
   </div>
   <div id="toast" role="status"></div>
 
   <template id="slotTpl">
     <div class="slot">
-      <div class="slot-head"><b class="slot-title">二维码</b><button type="button" class="link-danger remove">删除</button></div>
+      <div class="slot-head"><b class="slot-title">二维码</b><button type="button" class="link-danger remove" data-i18n="remove">删除</button></div>
       <div class="grid">
-        <label>显示文字<input class="s-label" maxlength="20" placeholder="微信扫一扫"></label>
-        <label>二维码内容<input class="s-text mono" maxlength="250" placeholder="链接或文本"></label>
+        <label><span data-i18n="showText">显示文字</span><input class="s-label" maxlength="20" data-i18n-placeholder="showTextPh" placeholder="微信扫一扫"></label>
+        <label><span data-i18n="qrText">二维码内容</span><input class="s-text mono" maxlength="250" data-i18n-placeholder="qrTextPh" placeholder="链接或文本"></label>
       </div>
-      <div class="slot-tools"><label class="btn ghost small">识别截图<input class="s-file" type="file" accept="image/*"></label><span class="s-status"></span></div>
+      <div class="slot-tools"><button type="button" class="btn ghost small pick" data-i18n="decode">识别截图</button><input class="s-file file-input" type="file" accept="image/*"><span class="s-status"></span></div>
     </div>
   </template>
 

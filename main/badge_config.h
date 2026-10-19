@@ -47,6 +47,7 @@ struct BadgeConfig {
     uint8_t layers; // BadgeLayerFlags present in SPIFFS
     uint8_t qr_count;
     BadgeQrSlot qr[kBadgeQrSlots];
+    uint8_t rotation; // clockwise quarter turns: 0, 1, 2, 3
 };
 
 void badge_config_defaults(BadgeConfig *cfg);
@@ -56,6 +57,3 @@ bool badge_config_save(const BadgeConfig *cfg);
 bool badge_config_apply_json(const char *json, BadgeConfig *cfg);
 struct cJSON;
 cJSON *badge_config_to_cjson(const BadgeConfig *cfg);
-
-uint32_t badge_scan_count();
-void badge_scan_count_increment();

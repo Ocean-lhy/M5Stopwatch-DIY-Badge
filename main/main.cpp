@@ -35,11 +35,13 @@ static ui::RouterConfig router_config(const BadgeConfig &c)
     r.setup_timeout_ms = kSetupTimeoutMs;
     r.brightness = c.brightness;
     r.ambient_brightness = c.ambient_brightness;
-    r.about_enabled = c.about_enabled;
-    r.touch_enabled = c.touch_enabled;
+    r.about_enabled = false;
+    r.touch_enabled = false;
     r.qr_count = c.qr_count;
     return r;
 }
+
+static void apply_rotation(uint8_t quarter) { display_set_rotation(quarter & 3); }
 
 static void build_content(const BadgeConfig &c, ui::Content &out)
 {
@@ -77,9 +79,10 @@ extern "C" void app_main(void)
 
     const bool published = badge_config_load(&s_config);
     board_init();
-    input_init(board_i2c());
+    input_init();
     rtc_time_init(board_i2c(), s_config.tz_offset_min);
     display_init();
+    apply_rotation(s_config.rotation);
     portal_init(&s_config);
 
     s_view = s_config;
@@ -91,6 +94,7 @@ extern "C" void app_main(void)
     ui::Content content;
     ui::Status status{};
     build_content(s_view, content);
+    renderer.prepare(content);
     read_status(status);
     router.begin(router_config(s_view), !published, now_ms());
     ESP_LOGI(TAG, "badge ready, published=%d layers=0x%02x", published, s_view.layers);
@@ -116,8 +120,10 @@ extern "C" void app_main(void)
             if (layers) s_layers.reload(layers);
             if (changes & PORTAL_TIME) rtc_time_set_tz(s_view.tz_offset_min);
             router.configure(router_config(s_view));
+            apply_rotation(s_view.rotation);
             build_content(s_view, content);
             renderer.invalidate();
+            renderer.prepare(content);
             if (changes & PORTAL_PUBLISHED) router.set_setup_stage(ui::SetupStage::Saved, now);
             force = true;
         }
@@ -152,7 +158,6 @@ extern "C" void app_main(void)
             force = true;
         }
 
-        if (router.take_scan_event()) badge_scan_count_increment();
         haptics_play(router.take_haptic(), now);
         haptics_update(now);
 
@@ -164,8 +169,13 @@ extern "C" void app_main(void)
             frame.setup.password = portal_password();
             frame.setup.wifi_qr = portal_wifi_qr();
             frame.setup.url = portal_url();
+            // Keep the scan-page code rasterized while the card is up, so opening it only blits.
+            const ui::Page shown = router.page();
+            if (shown == ui::Page::Card || shown == ui::Page::About || shown == ui::Page::Ambient)
+                renderer.prepare(content);
             renderer.draw(display_canvas(), frame, content, status);
             display_present();
+            router.presented(now_ms());
             if (!router.animating()) frame_level = ui::frame_emission(display_canvas());
             const int bad = renderer.take_qr_mismatches();
             if (bad > 0) ESP_LOGW(TAG, "QR readback: %d modules differ from the encoded code", bad);

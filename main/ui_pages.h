@@ -68,7 +68,13 @@ struct Frame {
 class Renderer {
 public:
     void draw(lgfx::LGFX_Sprite &dst, const Frame &frame, const Content &content, const Status &status);
-    void invalidate() { qr_key_[0] = 0; }
+    // Encodes and rasterizes the first code so opening the scan page only blits it.
+    void prepare(const Content &content);
+    void invalidate()
+    {
+        qr_key_[0] = 0;
+        qr_raster_ok_ = false;
+    }
     // Modules that read back wrong the first time a new code was drawn (-1 = not checked yet).
     int take_qr_mismatches();
 
@@ -79,6 +85,8 @@ private:
     void draw_ambient(lgfx::LGFX_Sprite &dst, const Frame &f, const Content &c, const Status &s);
     void draw_setup(lgfx::LGFX_Sprite &dst, const Frame &f, const Content &c);
     bool encode_qr(const char *text);
+    // Builds a sprite of the current code at `module` pixels per cell. Reused across frames.
+    bool rasterize_qr(int module);
     // Draws the cached code centered in a white square of `side` pixels at (x, y).
     void draw_qr(lgfx::LGFX_Sprite &dst, int x, int y, int side);
     bool qr_module(int x, int y) const { return qr_bits_[(y * qr_size_ + x) >> 3] & (1u << ((y * qr_size_ + x) & 7)); }
@@ -89,6 +97,11 @@ private:
     int qr_size_ = 0;
     bool qr_verify_ = false;
     int qr_mismatches_ = -1;
+    lgfx::LGFX_Sprite qr_sprite_;
+    int qr_raster_module_ = 0;
+    int qr_raster_size_ = 0;
+    uint16_t qr_dark_ = 0;
+    bool qr_raster_ok_ = false;
 };
 
 float ease_out_cubic(float t);

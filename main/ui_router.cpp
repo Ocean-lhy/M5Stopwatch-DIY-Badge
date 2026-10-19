@@ -7,6 +7,11 @@ namespace {
 constexpr uint32_t kSavedHoldMs = 3500;
 constexpr uint16_t kAmbientOutMs = 500;
 constexpr uint16_t kAmbientInMs = 600;
+// Fade to black fast, draw the scan page once while dark, then fade it in.
+constexpr uint16_t kScanOutMs = 70;
+constexpr uint16_t kScanInMs = 220;
+// Start the fade-in anyway if the caller never reports the frame as shown.
+constexpr uint32_t kPresentTimeoutMs = 250;
 
 struct Offset {
     int8_t x;
@@ -47,13 +52,6 @@ Haptic Router::take_haptic()
     return h;
 }
 
-bool Router::take_scan_event()
-{
-    bool e = scan_event_;
-    scan_event_ = false;
-    return e;
-}
-
 uint8_t Router::base_brightness(Page page) const
 {
     switch (page) {
@@ -86,6 +84,7 @@ void Router::dip_to(Page target, uint32_t now, uint16_t out_ms, uint16_t in_ms)
     anim_start_ = now;
     dip_target_ = target;
     dip_switched_ = false;
+    dip_waiting_present_ = false;
     dip_out_ms_ = out_ms;
     dip_in_ms_ = in_ms;
     anim_from_brightness_ = brightness_;
@@ -95,14 +94,18 @@ void Router::open_scan(uint32_t now)
 {
     if (page_ == Page::Card || page_ == Page::About) return_page_ = page_;
     else return_page_ = Page::Card;
-    page_ = Page::Scan;
-    anim_ = Anim::ScanIn;
-    anim_start_ = now;
-    anim_from_brightness_ = brightness_;
     scan_start_ = now;
     qr_index_ = 0;
     haptic_ = Haptic::Tick;
-    scan_event_ = true;
+    dip_to(Page::Scan, now, kScanOutMs, kScanInMs);
+}
+
+void Router::presented(uint32_t now)
+{
+    if (anim_ == Anim::Dip && dip_waiting_present_) {
+        dip_waiting_present_ = false;
+        dip_in_start_ = now;
+    }
 }
 
 void Router::close_scan(uint32_t now)
@@ -156,14 +159,10 @@ void Router::input(Input in, uint32_t now)
 
     switch (page_) {
     case Page::Card:
-    case Page::About: {
-        const bool on_card = page_ == Page::Card;
+    case Page::About:
         if (in == Input::KeyA) open_scan(now);
-        else if (cfg_.about_enabled && in == Input::KeyB) slide_to(on_card ? Page::About : Page::Card, on_card ? 1 : -1, now);
-        else if (cfg_.about_enabled && in == Input::SwipeLeft && on_card) slide_to(Page::About, 1, now);
-        else if (cfg_.about_enabled && in == Input::SwipeRight && !on_card) slide_to(Page::Card, -1, now);
+        else if (page_ == Page::About && in == Input::KeyB) slide_to(Page::Card, -1, now);
         break;
-    }
     case Page::Scan:
         if (in == Input::KeyA) close_scan(now);
         else if (in == Input::KeyB || in == Input::Tap || in == Input::SwipeLeft) {
@@ -189,19 +188,16 @@ void Router::update_brightness(uint32_t now)
     case Anim::Slide:
         brightness_ = base_brightness(page_);
         break;
-    case Anim::ScanIn:
-        brightness_ = lerp_u8(anim_from_brightness_, kScanBrightness, progress(now, anim_start_, kScanInMs));
-        break;
-    case Anim::Dip: {
-        uint32_t elapsed = now - anim_start_;
-        if (elapsed < dip_out_ms_) {
+    case Anim::Dip:
+        if (!dip_switched_) {
             brightness_ = lerp_u8(anim_from_brightness_, 0, progress(now, anim_start_, dip_out_ms_));
+        } else if (dip_waiting_present_) {
+            brightness_ = 0;
         } else {
-            float t = progress(now, anim_start_ + dip_out_ms_, dip_in_ms_);
+            float t = progress(now, dip_in_start_, dip_in_ms_);
             brightness_ = lerp_u8(0, base_brightness(dip_target_), ease_out_cubic(t));
         }
         break;
-    }
     }
 }
 
@@ -228,16 +224,18 @@ bool Router::tick(uint32_t now)
     if (anim_ == Anim::Dip && !dip_switched_ && now - anim_start_ >= dip_out_ms_) {
         page_ = dip_target_;
         dip_switched_ = true;
+        dip_waiting_present_ = true;
+        dip_switch_at_ = now;
         if (page_ == Page::Scan) scan_start_ = now;
         dirty = true;
     }
-    if (anim_ != Anim::None) {
-        uint32_t duration = anim_ == Anim::Slide ? kSlideMs
-                            : anim_ == Anim::ScanIn ? kScanInMs
-                                                    : (uint32_t)dip_out_ms_ + dip_in_ms_;
+    if (anim_ == Anim::Dip && dip_waiting_present_ && now - dip_switch_at_ >= kPresentTimeoutMs) presented(now);
+    if (anim_ == Anim::Slide) {
+        dirty = true;
+        if (now - anim_start_ >= kSlideMs) anim_ = Anim::None;
+    } else if (anim_ == Anim::Dip && dip_switched_ && !dip_waiting_present_ && now - dip_in_start_ >= dip_in_ms_) {
         // A dip only changes brightness, so pixels change once at the switch.
-        if (anim_ != Anim::Dip) dirty = true;
-        if (now - anim_start_ >= duration) anim_ = Anim::None;
+        anim_ = Anim::None;
     }
 
     if (anim_ == Anim::None) {
@@ -273,7 +271,7 @@ bool Router::tick(uint32_t now)
         last_key_ = key;
         dirty = true;
     }
-    return dirty || anim_ == Anim::Slide || anim_ == Anim::ScanIn;
+    return dirty || anim_ == Anim::Slide;
 }
 
 void Router::fill(Frame &f) const
@@ -283,7 +281,7 @@ void Router::fill(Frame &f) const
     f.from = from_;
     f.slide = anim_ == Anim::Slide ? progress(now_, anim_start_, kSlideMs) : 1.0f;
     f.slide_dir = slide_dir_;
-    f.scan_enter = anim_ == Anim::ScanIn ? progress(now_, anim_start_, kScanInMs) : 1.0f;
+    f.scan_enter = 1.0f;
     f.qr_index = qr_index_;
     f.countdown = 1.0f;
     if (page_ == Page::Scan && cfg_.scan_timeout_ms) {

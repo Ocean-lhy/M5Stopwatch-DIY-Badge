@@ -2,7 +2,7 @@
   const $ = s => document.querySelector(s);
   const $$ = s => Array.from(document.querySelectorAll(s));
   const C = window.Compose;
-  const TEXT_FIELDS = ['name', 'title', 'company', 'tags', 'intro', 'seeking', 'booth', 'email', 'phone'];
+  const TEXT_FIELDS = ['name', 'title', 'company', 'tags', 'email', 'phone'];
   const MAX_SLOTS = 3;
 
   const state = {
@@ -11,7 +11,9 @@
     brightness: 200,
     ambientBrightness: 40,
     ambientAfter: 45,
+    ambientHold: 45,
     scanTimeout: 30,
+    rotation: 0,
     avatar: { image: null, zoom: 1, ox: 0, oy: 0 },
     avatarDirty: false,
     battery: -1,
@@ -20,6 +22,110 @@
     busy: false,
     scanIndex: 0,
   };
+
+  const messages = {
+    zh: {
+      title: 'M5 Badge Studio',
+      connecting: '连接中', connected: '已连接', offline: '未连接',
+      previewAria: '胸牌屏幕预览', tabsAria: '预览页面',
+      tabCard: '名片', tabScan: '扫码', tabAmbient: '待机',
+      battery: '电量', hotspot: '热点',
+      charging: '充电中',
+      cardInfo: '名片信息', name: '姓名', namePh: '姓名',
+      job: '职位', jobPh: '职位', company: '公司', companyPh: '公司',
+      tags: '标签', tagsPh: '逗号分隔，最多 3 个',
+      avatar: '头像', avatarHint: '拖动调整位置', cropAria: '头像裁剪',
+      pickPhoto: '选择照片', zoom: '缩放',
+      qr: '二维码', qrHint: '选择二维码截图自动识别，最多 3 个',
+      addQr: '添加二维码', addVcard: '生成联系人二维码',
+      email: '邮箱', phone: '电话', phonePh: '可选',
+      wechatHint: '微信：我 → 个人资料 → 我的二维码 → “…” → 保存图片',
+      look: '外观', themesAria: '主题',
+      theme0: '深海', theme1: '品牌蓝', theme2: '纸白',
+      brightness: '名片亮度', ambient: '进入待机', never: '从不', seconds: '{n} 秒',
+      scanBack: '扫码页返回', rotation: '屏幕方向', rotationAria: '屏幕方向',
+      keys: '按键', yellow: '黄键', yellowDo: '扫码页 / 返回',
+      blue: '蓝键', blueDo: '扫码页切换二维码',
+      blueLong: '长按蓝键 2 秒', blueLongDo: '设置模式',
+      androidHint: '无法选择图片时，用浏览器打开',
+      pickBlocked: '这是系统的 Wi-Fi 登录窗口，不能选择图片。关闭它并保持 Wi-Fi 连接（iPhone 点右上角“完成”，或“取消”→“不使用互联网”），再用浏览器打开：',
+      captiveBanner: '当前在 Wi-Fi 登录窗口中，可以改文字和发布；换头像、识别截图请用浏览器打开 192.168.4.1。',
+      copyUrl: '复制地址', copied: '已复制',
+      reset: '恢复默认设置', publish: '发布到胸牌',
+      dirty: '未发布', published: '已发布',
+      qrSlot: '二维码 {n}', remove: '删除',
+      showText: '显示文字', showTextPh: '微信扫一扫',
+      qrText: '二维码内容', qrTextPh: '链接或文本', decode: '识别截图',
+      decoding: '识别中…', decoded: '已识别',
+      decodeMiss: '未识别到二维码', decodeLong: '内容太长，胸牌放不下',
+      badImage: '无法读取这张图片，请换一张 JPG/PNG',
+      needContact: '先填写邮箱或电话', vcardLabel: '扫码保存联系方式',
+      noBadge: '未连接到胸牌', needName: '请先填写姓名',
+      upCard: '上传名片页 1/3', upName: '上传待机名字 2/3', upSave: '保存设置 3/3',
+      publishOk: '发布成功', publishFail: '发布失败：{msg}', timeout: '请求超时',
+      resetConfirm: '恢复默认会清空名片、二维码和图层，胸牌回到设置页。继续吗？',
+      resetFail: '恢复失败，请重试',
+      previewName: '你的名字', noQr: '未设置二维码',
+    },
+    en: {
+      title: 'M5 Badge Studio',
+      connecting: 'Connecting', connected: 'Connected', offline: 'Offline',
+      previewAria: 'Badge preview', tabsAria: 'Preview pages',
+      tabCard: 'Card', tabScan: 'QR', tabAmbient: 'Idle',
+      battery: 'Battery', hotspot: 'Hotspot',
+      charging: 'Charging',
+      cardInfo: 'Card', name: 'Name', namePh: 'Name',
+      job: 'Title', jobPh: 'Title', company: 'Company', companyPh: 'Company',
+      tags: 'Tags', tagsPh: 'Comma separated, up to 3',
+      avatar: 'Photo', avatarHint: 'Drag to reposition', cropAria: 'Crop photo',
+      pickPhoto: 'Choose photo', zoom: 'Zoom',
+      qr: 'QR codes', qrHint: 'Pick a screenshot to read it. Up to 3.',
+      addQr: 'Add QR code', addVcard: 'Make contact QR',
+      email: 'Email', phone: 'Phone', phonePh: 'Optional',
+      wechatHint: 'WeChat: Me → Profile → My QR Code → … → Save Image',
+      look: 'Appearance', themesAria: 'Theme',
+      theme0: 'Ocean', theme1: 'Brand', theme2: 'Paper',
+      brightness: 'Card brightness', ambient: 'Idle after', never: 'Never', seconds: '{n} s',
+      scanBack: 'QR page returns', rotation: 'Orientation', rotationAria: 'Orientation',
+      keys: 'Buttons', yellow: 'Yellow', yellowDo: 'QR page / back',
+      blue: 'Blue', blueDo: 'Next QR code',
+      blueLong: 'Hold blue 2 s', blueLongDo: 'Setup mode',
+      androidHint: 'If photos cannot be picked, open',
+      pickBlocked: 'This is the system Wi-Fi sign-in window, which cannot pick photos. Close it and stay on the Wi-Fi (iPhone: Done, or Cancel → Use Without Internet), then open in a browser:',
+      captiveBanner: 'You are in the Wi-Fi sign-in window. Text edits and publishing work here; to change the photo or read a screenshot, open 192.168.4.1 in a browser.',
+      copyUrl: 'Copy address', copied: 'Copied',
+      reset: 'Restore defaults', publish: 'Publish to badge',
+      dirty: 'Not published', published: 'Published',
+      qrSlot: 'QR {n}', remove: 'Remove',
+      showText: 'Label', showTextPh: 'Scan to add me',
+      qrText: 'QR content', qrTextPh: 'Link or text', decode: 'Read screenshot',
+      decoding: 'Reading…', decoded: 'Read',
+      decodeMiss: 'No QR code found', decodeLong: 'Too long for the badge',
+      badImage: 'Could not read this image. Use a JPG or PNG.',
+      needContact: 'Add an email or phone first', vcardLabel: 'Save contact',
+      noBadge: 'Not connected to the badge', needName: 'Enter a name first',
+      upCard: 'Uploading card 1/3', upName: 'Uploading idle name 2/3', upSave: 'Saving settings 3/3',
+      publishOk: 'Published', publishFail: 'Publish failed: {msg}', timeout: 'Request timed out',
+      resetConfirm: 'Restore defaults clears the card, QR codes, and layers, and the badge returns to setup. Continue?',
+      resetFail: 'Could not restore defaults. Try again.',
+      previewName: 'Your name', noQr: 'No QR code',
+    },
+  };
+  let lang = localStorage.getItem('m5-lang');
+  if (lang !== 'zh' && lang !== 'en') lang = navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  const tr = (key, vars = {}) => Object.entries(vars).reduce(
+    (s, [k, v]) => s.replaceAll(`{${k}}`, v), messages[lang][key] ?? messages.en[key] ?? key);
+  let connKind = 'pending';
+  let pubKey = '';
+  let pubVars = {};
+  let lastDevice = null;
+
+  function applyI18n(root) {
+    const scope = root || document;
+    scope.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = tr(el.dataset.i18n); });
+    scope.querySelectorAll('[data-i18n-placeholder]').forEach(el => { el.placeholder = tr(el.dataset.i18nPlaceholder); });
+    scope.querySelectorAll('[data-i18n-aria]').forEach(el => { el.setAttribute('aria-label', tr(el.dataset.i18nAria)); });
+  }
 
   // ------------------------------------------------------------ utilities
   function toast(message) {
@@ -56,16 +162,23 @@
     return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
   }
 
-  function setConn(kind, text) {
-    $('#conn').className = 'conn ' + kind;
-    $('#connText').textContent = text;
+  function setConn(kind) {
+    connKind = kind;
+    $('#conn').className = 'conn ' + (kind === 'pending' ? '' : kind);
+    $('#connText').textContent = tr(kind === 'online' ? 'connected' : kind === 'offline' ? 'offline' : 'connecting');
+  }
+
+  function setPub(key, vars = {}) {
+    pubKey = key || '';
+    pubVars = vars;
+    const s = $('#pubStatus');
+    s.className = 'pub-status' + (key === 'dirty' ? ' dirty' : key === 'published' ? ' ok' : key === 'publishFail' ? ' err' : '');
+    s.textContent = key ? tr(key, vars) : '';
   }
 
   function markDirty() {
     state.dirty = true;
-    const s = $('#pubStatus');
-    s.className = 'pub-status dirty';
-    s.textContent = '未发布';
+    setPub('dirty');
     schedulePreview();
   }
 
@@ -73,8 +186,6 @@
   function model() {
     const m = {};
     for (const id of TEXT_FIELDS) m[id] = $('#' + id).value.trim();
-    m.about = $('#about').checked;
-    m.touch = $('#touch').checked;
     m.qr = slots().map(s => ({ label: s.querySelector('.s-label').value.trim(), text: s.querySelector('.s-text').value.trim() }))
       .filter(q => q.text);
     return m;
@@ -101,14 +212,12 @@
   }
 
   function drawPreview() {
+    $('#preview').style.transform = `rotate(${(state.rotation & 3) * 90}deg)`;
     const m = model();
     const t = theme();
     preview.save();
     if (state.view === 'card') {
       C.drawCard(preview, m, state.avatar, t);
-      C.drawStatusPreview(preview, t, state.battery, state.runtime);
-    } else if (state.view === 'about') {
-      C.drawAbout(preview, m, t);
       C.drawStatusPreview(preview, t, state.battery, state.runtime);
     } else if (state.view === 'scan') {
       C.drawScanPreview(preview, m, t, state.scanIndex);
@@ -191,6 +300,59 @@
     state.avatar.zoom = Number(e.target.value);
     avatarChanged();
   });
+  // iOS sign-in sheets have no "Safari/" token; Android sign-in apps run in a WebView ("; wv").
+  function inSignInWindow() {
+    const ua = navigator.userAgent;
+    if (/iPhone|iPad|iPod/.test(ua)) return !/Safari\//.test(ua) && !/CriOS|FxiOS|EdgiOS|MicroMessenger/.test(ua);
+    return /Android/.test(ua) && /; wv\)/.test(ua);
+  }
+  const signInWindow = inSignInWindow();
+
+  function showPickHelp(anchor) {
+    const host = anchor.closest('.avatar-tools, .slot-tools') || anchor.parentElement;
+    if (host.querySelector('.pick-help')) return;
+    const url = `http://${location.host || '192.168.4.1'}/`;
+    const box = document.createElement('div');
+    box.className = 'notice warn pick-help';
+    box.innerHTML = '<p></p><div class="pick-url"><input class="mono" readonly><button type="button" class="ghost small"></button></div>';
+    box.querySelector('p').textContent = tr('pickBlocked');
+    const field = box.querySelector('input');
+    field.value = url;
+    const copy = box.querySelector('button');
+    copy.textContent = tr('copyUrl');
+    copy.addEventListener('click', async () => {
+      field.select();
+      try { await navigator.clipboard.writeText(url); } catch (e) { document.execCommand && document.execCommand('copy'); }
+      copy.textContent = tr('copied');
+    });
+    host.appendChild(box);
+  }
+
+  // Sign-in windows silently ignore file pickers; explain instead of doing nothing.
+  function openPicker(input, anchor) {
+    if (signInWindow) {
+      showPickHelp(anchor);
+      return;
+    }
+    let reacted = false;
+    const mark = () => { reacted = true; };
+    window.addEventListener('blur', mark, { once: true });
+    document.addEventListener('visibilitychange', mark, { once: true });
+    input.addEventListener('change', mark, { once: true });
+    input.addEventListener('cancel', mark, { once: true });
+    input.click();
+    // Android pickers always background the page, so no reaction means a blocked
+    // picker (e.g. a vendor sign-in app the UA check missed). iOS shows an in-page
+    // sheet without blur, so it relies on the UA check alone.
+    if (!/Android/.test(navigator.userAgent)) return;
+    setTimeout(() => {
+      window.removeEventListener('blur', mark);
+      document.removeEventListener('visibilitychange', mark);
+      if (!reacted) showPickHelp(anchor);
+    }, 1500);
+  }
+
+  $('#avatarPick').addEventListener('click', e => openPicker($('#avatarFile'), e.currentTarget));
   $('#avatarFile').addEventListener('change', async e => {
     const file = e.target.files[0];
     if (!file) return;
@@ -200,7 +362,7 @@
       $('#zoom').value = 1;
       avatarChanged();
     } catch (err) {
-      toast('无法读取这张图片，请换一张 JPG/PNG');
+      toast(tr('badImage'));
     }
   });
 
@@ -210,7 +372,7 @@
   }
 
   function renumberSlots() {
-    slots().forEach((s, i) => { s.querySelector('.slot-title').textContent = `二维码 ${i + 1}`; });
+    slots().forEach((s, i) => { s.querySelector('.slot-title').textContent = tr('qrSlot', { n: i + 1 }); });
     const full = slots().length >= MAX_SLOTS;
     $('#addSlot').disabled = full;
     $('#addVcard').disabled = full;
@@ -227,8 +389,11 @@
       renumberSlots();
       markDirty();
     });
-    node.querySelector('.s-file').addEventListener('change', e => recognize(node, e.target));
+    const file = node.querySelector('.s-file');
+    node.querySelector('.pick').addEventListener('click', e => openPicker(file, e.currentTarget));
+    file.addEventListener('change', e => recognize(node, e.target));
     $('#slots').appendChild(node);
+    applyI18n(node);
     renumberSlots();
     return node;
   }
@@ -271,12 +436,18 @@
     return null;
   }
 
+  function setSlotStatus(node, key) {
+    node.dataset.status = key || '';
+    const status = node.querySelector('.s-status');
+    const err = key === 'decodeMiss' || key === 'decodeLong';
+    status.className = 's-status' + (key === 'decoded' ? ' ok' : key === 'decoding' ? ' busy' : err ? ' err' : '');
+    status.textContent = key ? tr(key) : '';
+  }
+
   async function recognize(node, input) {
     const file = input.files[0];
     if (!file) return;
-    const status = node.querySelector('.s-status');
-    status.className = 's-status busy';
-    status.textContent = '识别中…';
+    setSlotStatus(node, 'decoding');
     try {
       const img = await loadImage(URL.createObjectURL(file));
       const text = await decodeQr(img);
@@ -284,16 +455,14 @@
       if (text.length > 250) throw new Error('too long');
       node.querySelector('.s-text').value = text;
       const label = node.querySelector('.s-label');
-      if (!label.value && /wechat\.com|weixin/i.test(text)) label.value = '微信扫一扫';
-      status.className = 's-status ok';
-      status.textContent = '已识别';
+      if (!label.value && /wechat\.com|weixin/i.test(text)) label.value = tr('showTextPh');
+      setSlotStatus(node, 'decoded');
       state.view = 'scan';
       state.scanIndex = slots().indexOf(node);
       $$('#previewTabs button').forEach(x => x.setAttribute('aria-selected', String(x.dataset.view === 'scan')));
       markDirty();
     } catch (e) {
-      status.className = 's-status err';
-      status.textContent = e.message === 'too long' ? '内容太长，胸牌放不下' : '未识别到二维码';
+      setSlotStatus(node, e.message === 'too long' ? 'decodeLong' : 'decodeMiss');
     } finally {
       input.value = '';
     }
@@ -313,11 +482,11 @@
   $('#addSlot').addEventListener('click', () => { addSlot(); markDirty(); });
   $('#addVcard').addEventListener('click', () => {
     if (!$('#phone').value.trim() && !$('#email').value.trim()) {
-      toast('先填写邮箱或电话');
+      toast(tr('needContact'));
       $('#email').focus();
       return;
     }
-    addSlot('扫码保存联系方式', vcard());
+    addSlot(tr('vcardLabel'), vcard());
     markDirty();
   });
 
@@ -331,7 +500,8 @@
       b.className = 'theme';
       b.setAttribute('role', 'radio');
       b.setAttribute('aria-checked', String(t.id === state.theme));
-      b.innerHTML = `<i style="background:${t.bg};--dot:${t.accent}"></i><span>${t.name}</span>`;
+      b.innerHTML = `<i style="background:${t.bg};--dot:${t.accent}"></i><span></span>`;
+      b.querySelector('span').textContent = tr('theme' + t.id);
       b.addEventListener('click', () => {
         state.theme = t.id;
         renderThemes();
@@ -351,8 +521,39 @@
     }));
     return sync;
   }
-  const syncAmbient = bindSeg('ambientAfter', 'ambientAfter');
-  const syncScan = bindSeg('scanTimeout', 'scanTimeout');
+  const syncRotation = bindSeg('rotation', 'rotation');
+
+  function syncAmbient() {
+    const never = state.ambientAfter === 0;
+    $('#ambientNever').checked = never;
+    $('#ambientAfter').disabled = never;
+    $('#ambientOut').textContent = never ? tr('never') : tr('seconds', { n: state.ambientAfter });
+  }
+  function syncScan() {
+    $('#scanTimeout').value = state.scanTimeout;
+    $('#scanOut').textContent = tr('seconds', { n: state.scanTimeout });
+  }
+  $('#ambientAfter').addEventListener('input', e => {
+    state.ambientAfter = Number(e.target.value);
+    state.ambientHold = state.ambientAfter;
+    syncAmbient();
+    markDirty();
+  });
+  $('#ambientNever').addEventListener('change', e => {
+    if (e.target.checked) {
+      state.ambientHold = Number($('#ambientAfter').value) || state.ambientHold || 45;
+      state.ambientAfter = 0;
+    } else {
+      state.ambientAfter = state.ambientHold || 45;
+    }
+    syncAmbient();
+    markDirty();
+  });
+  $('#scanTimeout').addEventListener('input', e => {
+    state.scanTimeout = Number(e.target.value);
+    syncScan();
+    markDirty();
+  });
 
   $('#brightness').addEventListener('input', e => {
     state.brightness = Number(e.target.value);
@@ -360,29 +561,32 @@
     markDirty();
   });
   TEXT_FIELDS.forEach(id => $('#' + id).addEventListener('input', markDirty));
-  ['about', 'touch'].forEach(id => $('#' + id).addEventListener('change', markDirty));
 
   // ------------------------------------------------------------ device state
   function applyDevice(d) {
     if (!d) return;
+    lastDevice = d;
     state.battery = typeof d.battery === 'number' ? d.battery : -1;
     state.runtime = !d.charging && typeof d.runtime === 'number' ? d.runtime : -1;
     const runtime = state.runtime >= 0 ? ` · ${state.runtime.toFixed(1)}h` : '';
-    $('#devBattery').textContent = state.battery >= 0 ? `${state.battery}%${d.charging ? ' 充电中' : runtime}` : '--';
-    $('#devScans').textContent = d.scans != null ? `${d.scans} 次` : '--';
+    $('#devBattery').textContent = state.battery >= 0 ? `${state.battery}%${d.charging ? ' ' + tr('charging') : runtime}` : '--';
     $('#devSsid').textContent = d.ssid || '--';
   }
 
   // Fills the form once; later polls only refresh telemetry so typing is never overwritten.
   function applyConfig(s) {
     for (const id of TEXT_FIELDS) $('#' + id).value = s[id] || '';
-    $('#about').checked = s.about !== false;
-    $('#touch').checked = s.touch !== false;
     state.theme = s.theme || 0;
     state.brightness = s.brightness || 200;
     state.ambientBrightness = s.ambientBrightness ?? 40;
-    state.ambientAfter = s.ambientAfter ?? 45;
-    state.scanTimeout = s.scanTimeout || 30;
+    let ambient = s.ambientAfter ?? 45;
+    if (ambient !== 0) ambient = Math.min(60, Math.max(10, ambient));
+    state.ambientAfter = ambient;
+    state.ambientHold = ambient || 45;
+    if (ambient) $('#ambientAfter').value = ambient;
+    let scan = s.scanTimeout || 30;
+    state.scanTimeout = Math.min(30, Math.max(10, scan));
+    state.rotation = [0, 1, 2, 3].includes(s.rotation) ? s.rotation : 0;
     $('#brightness').value = state.brightness;
     $('#brightnessOut').textContent = state.brightness;
     $('#slots').innerHTML = '';
@@ -391,6 +595,7 @@
     renderThemes();
     syncAmbient();
     syncScan();
+    syncRotation();
   }
 
   async function syncTime() {
@@ -406,16 +611,23 @@
   async function boot() {
     renderThemes();
     drawCrop();
+    if (signInWindow) {
+      const banner = document.createElement('p');
+      banner.className = 'notice warn';
+      banner.dataset.i18n = 'captiveBanner';
+      banner.textContent = tr('captiveBanner');
+      $('.steps').prepend(banner);
+    }
     try {
       const s = await api('/api/state');
       applyConfig(s);
       applyDevice(s.device);
-      setConn('online', '已连接');
+      setConn('online');
       syncTime();
     } catch (e) {
       applyConfig({});
-      setConn('offline', '未连接');
-      toast('未连接到胸牌');
+      setConn('offline');
+      toast(tr('noBadge'));
     }
     try {
       state.avatar = { image: await loadImage('/avatar.jpg?' + Date.now()), zoom: 1, ox: 0, oy: 0 };
@@ -427,10 +639,10 @@
       try {
         const s = await api('/api/state', {}, 5000);
         applyDevice(s.device);
-        setConn('online', '已连接');
+        setConn('online');
         if (state.view !== 'scan') drawPreview();
       } catch (e) {
-        setConn('offline', '未连接');
+        setConn('offline');
       }
     }, 6000);
   }
@@ -454,7 +666,7 @@
     const status = $('#pubStatus');
     const m = model();
     if (!m.name) {
-      toast('请先填写姓名');
+      toast(tr('needName'));
       $('#name').focus();
       return;
     }
@@ -467,19 +679,12 @@
       const t = theme();
       const card = layerCanvas(C.SIZE, C.SIZE);
       C.drawCard(card.getContext('2d'), m, state.avatar, t);
-      step('上传名片页 1/4');
+      step(tr('upCard'));
       await upload('card', await canvasBlob(card, 0.93));
-
-      if (m.about) {
-        const about = layerCanvas(C.SIZE, C.SIZE);
-        C.drawAbout(about.getContext('2d'), m, t);
-        step('上传介绍页 2/4');
-        await upload('about', await canvasBlob(about, 0.93));
-      }
 
       const name = layerCanvas(360, 96);
       C.drawNameStrip(name.getContext('2d'), m);
-      step('上传待机名字 3/4');
+      step(tr('upName'));
       await upload('name', await canvasBlob(name, 0.9));
 
       if (state.avatarDirty && state.avatar.image) {
@@ -491,18 +696,21 @@
         await upload('avatar', await canvasBlob(a, 0.9));
       }
 
-      step('保存设置 4/4');
+      step(tr('upSave'));
       await api('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...m,
+          about: false,
+          touch: false,
           theme: t.id,
           colors: { bg: t.bg, ink: t.ink, muted: t.muted, accent: t.accent },
           brightness: state.brightness,
           ambientBrightness: state.ambientBrightness,
           ambientAfter: state.ambientAfter,
           scanTimeout: state.scanTimeout,
+          rotation: state.rotation,
           time: Math.floor(Date.now() / 1000),
           tz: -new Date().getTimezoneOffset(),
           publish: true,
@@ -510,12 +718,12 @@
       });
       state.dirty = false;
       state.avatarDirty = false;
-      status.className = 'pub-status ok';
-      status.textContent = '已发布';
-      toast('发布成功');
+      setPub('published');
+      toast(tr('publishOk'));
     } catch (e) {
-      status.className = 'pub-status err';
-      status.textContent = `发布失败：${e.name === 'AbortError' ? '请求超时' : e.message}`;
+      const msg = e.name === 'AbortError' ? tr('timeout') : e.message;
+      setPub('publishFail', { msg });
+      toast(tr('publishFail', { msg }));
     } finally {
       state.busy = false;
       btn.disabled = false;
@@ -524,12 +732,12 @@
   });
 
   $('#resetBtn').addEventListener('click', async () => {
-    if (!confirm('恢复默认会清空名片、二维码和图层，胸牌回到设置页。继续吗？')) return;
+    if (!confirm(tr('resetConfirm'))) return;
     try {
       await api('/api/reset', { method: 'POST' });
       location.reload();
     } catch (e) {
-      toast('恢复失败，请重试');
+      toast(tr('resetFail'));
     }
   });
 
@@ -537,5 +745,41 @@
     if (state.dirty) e.preventDefault();
   });
 
+  function applyLanguage() {
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+    document.title = tr('title');
+    applyI18n(document);
+    $$('#lang button').forEach(b => {
+      const on = b.dataset.lang === lang;
+      b.setAttribute('aria-checked', String(on));
+      b.classList.toggle('on', on);
+    });
+    if (C.labels) {
+      C.labels.name = tr('previewName');
+      C.labels.noQr = tr('noQr');
+    }
+    renderThemes();
+    renumberSlots();
+    $$('#slots .slot').forEach(node => { if (node.dataset.status) setSlotStatus(node, node.dataset.status); });
+    syncAmbient();
+    syncScan();
+    setConn(connKind);
+    if (pubKey) setPub(pubKey, pubVars);
+    if (lastDevice) applyDevice(lastDevice);
+    schedulePreview();
+  }
+
+  $$('#lang button').forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.lang === lang) return;
+    lang = b.dataset.lang === 'en' ? 'en' : 'zh';
+    localStorage.setItem('m5-lang', lang);
+    applyLanguage();
+  }));
+
+  try {
+    applyLanguage();
+  } catch (e) {
+    console.error(e);
+  }
   boot();
 })();

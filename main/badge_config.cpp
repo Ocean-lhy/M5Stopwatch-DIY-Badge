@@ -9,7 +9,10 @@
 #include "cJSON.h"
 #include "nvs.h"
 
-static constexpr uint32_t kVersion = 2;
+static constexpr uint32_t kVersion = 3;
+// v2 blobs are the same size: `rotation` sits in the old tail padding.
+static constexpr uint32_t kConfigV2 = 2;
+static_assert(sizeof(BadgeConfig) == 1564, "NVS config size; v2 migration depends on it");
 static constexpr char kNamespace[] = "badge";
 
 static void copy_field(char *dst, size_t dst_len, const char *src)
@@ -71,13 +74,14 @@ void badge_config_defaults(BadgeConfig *cfg)
     cfg->ink = rgb565_from_hex(colors[1], 0xFFFF);
     cfg->muted = rgb565_from_hex(colors[2], 0x8410);
     cfg->accent = rgb565_from_hex(colors[3], 0x3D3F);
-    cfg->brightness = 200;
+    cfg->brightness = (uint8_t)kProfileBrightness;
     cfg->ambient_brightness = 40;
-    cfg->ambient_after_s = 45;
-    cfg->scan_timeout_s = 30;
-    cfg->touch_enabled = true;
-    cfg->about_enabled = true;
+    cfg->ambient_after_s = (uint16_t)kProfileAmbientAfterS;
+    cfg->scan_timeout_s = (uint16_t)kProfileScanTimeoutS;
+    cfg->touch_enabled = false;
+    cfg->about_enabled = false;
     cfg->tz_offset_min = (int16_t)kProfileTzOffsetMin;
+    cfg->rotation = (uint8_t)kProfileRotation;
     cfg->qr_count = (uint8_t)kProfileQrCount;
     for (int i = 0; i < kProfileQrCount && i < kBadgeQrSlots; ++i) {
         copy_field(cfg->qr[i].label, sizeof(cfg->qr[i].label), kProfileQr[i][0]);
@@ -94,8 +98,18 @@ bool badge_config_load(BadgeConfig *cfg)
     size_t len = sizeof(loaded);
     esp_err_t err = nvs_get_blob(handle, "config", &loaded, &len);
     nvs_close(handle);
-    if (err != ESP_OK || len != sizeof(loaded) || loaded.version != kVersion) return false;
+    if (err != ESP_OK || len != sizeof(loaded) || (loaded.version != kVersion && loaded.version != kConfigV2))
+        return false;
     *cfg = loaded;
+    cfg->version = kVersion;
+    if (loaded.version == kConfigV2) cfg->rotation = 0;
+    if (cfg->rotation > 3) cfg->rotation = 0;
+    if (cfg->ambient_after_s != 0) {
+        if (cfg->ambient_after_s < 10) cfg->ambient_after_s = 10;
+        if (cfg->ambient_after_s > 60) cfg->ambient_after_s = 60;
+    }
+    if (cfg->scan_timeout_s < 10) cfg->scan_timeout_s = 10;
+    if (cfg->scan_timeout_s > 30) cfg->scan_timeout_s = 30;
     if (cfg->qr_count > kBadgeQrSlots) cfg->qr_count = kBadgeQrSlots;
     for (auto &slot : cfg->qr) {
         slot.label[sizeof(slot.label) - 1] = 0;
@@ -167,10 +181,16 @@ bool badge_config_apply_json(const char *json, BadgeConfig *cfg)
     }
     if (read_number(root, "brightness", 40, 255, &v)) cfg->brightness = (uint8_t)v;
     if (read_number(root, "ambientBrightness", 0, 120, &v)) cfg->ambient_brightness = (uint8_t)v;
-    if (read_number(root, "ambientAfter", 0, 3600, &v)) cfg->ambient_after_s = (uint16_t)v;
-    if (cfg->ambient_after_s > 0 && cfg->ambient_after_s < 10) cfg->ambient_after_s = 10;
-    if (read_number(root, "scanTimeout", 10, 300, &v)) cfg->scan_timeout_s = (uint16_t)v;
+    if (read_number(root, "ambientAfter", 0, 60, &v)) cfg->ambient_after_s = (uint16_t)v;
+    if (cfg->ambient_after_s != 0) {
+        if (cfg->ambient_after_s < 10) cfg->ambient_after_s = 10;
+        if (cfg->ambient_after_s > 60) cfg->ambient_after_s = 60;
+    }
+    if (read_number(root, "scanTimeout", 10, 30, &v)) cfg->scan_timeout_s = (uint16_t)v;
+    if (cfg->scan_timeout_s < 10) cfg->scan_timeout_s = 10;
+    if (cfg->scan_timeout_s > 30) cfg->scan_timeout_s = 30;
     if (read_number(root, "tz", -720, 840, &v)) cfg->tz_offset_min = (int16_t)v;
+    if (read_number(root, "rotation", 0, 3, &v)) cfg->rotation = (uint8_t)v;
     read_bool(root, "touch", &cfg->touch_enabled);
     read_bool(root, "about", &cfg->about_enabled);
 
@@ -228,6 +248,7 @@ cJSON *badge_config_to_cjson(const BadgeConfig *cfg)
     cJSON_AddNumberToObject(root, "ambientAfter", cfg->ambient_after_s);
     cJSON_AddNumberToObject(root, "scanTimeout", cfg->scan_timeout_s);
     cJSON_AddNumberToObject(root, "tz", cfg->tz_offset_min);
+    cJSON_AddNumberToObject(root, "rotation", cfg->rotation);
     cJSON_AddBoolToObject(root, "touch", cfg->touch_enabled);
     cJSON_AddBoolToObject(root, "about", cfg->about_enabled);
     cJSON_AddNumberToObject(root, "layers", cfg->layers);
@@ -239,31 +260,4 @@ cJSON *badge_config_to_cjson(const BadgeConfig *cfg)
         cJSON_AddItemToArray(qr, slot);
     }
     return root;
-}
-
-static uint32_t s_scans = 0;
-static bool s_scans_loaded = false;
-
-uint32_t badge_scan_count()
-{
-    if (!s_scans_loaded) {
-        nvs_handle_t handle = 0;
-        if (nvs_open(kNamespace, NVS_READONLY, &handle) == ESP_OK) {
-            nvs_get_u32(handle, "scans", &s_scans);
-            nvs_close(handle);
-        }
-        s_scans_loaded = true;
-    }
-    return s_scans;
-}
-
-void badge_scan_count_increment()
-{
-    badge_scan_count();
-    ++s_scans;
-    nvs_handle_t handle = 0;
-    if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK) return;
-    nvs_set_u32(handle, "scans", s_scans);
-    nvs_commit(handle);
-    nvs_close(handle);
 }

@@ -11,8 +11,11 @@
 #include <string>
 #include <vector>
 
+#include "orient.h"
 #include "ui_pages.h"
 #include "ui_router.h"
+
+#include <chrono>
 
 namespace {
 
@@ -109,6 +112,28 @@ int main(int argc, char **argv)
     content.qr_count = 1;
     ui::Status status{82, 9.6f, false, true, 10, 24};
 
+    int orient_fail = 0;
+    {
+        const int n = 32;
+        for (int r = 0; r < 4; ++r) {
+            for (int y = 0; y < n; y += 7) {
+                for (int x = 0; x < n; x += 5) {
+                    int ox = -1, oy = -1, bx = -1, by = -1;
+                    orient_map(n, r, x, y, &ox, &oy);
+                    orient_unmap(n, r, ox, oy, &bx, &by);
+                    if (bx != x || by != y || ox < 0 || oy < 0 || ox >= n || oy >= n) ++orient_fail;
+                }
+            }
+        }
+        uint16_t src[4] = {1, 2, 3, 4}; // row-major 2x2: A B / C D
+        uint16_t dst[4] = {};
+        orient_blit(src, dst, 2, 1);
+        // 90 clockwise: A moves to the top-right, C to the top-left.
+        const bool rot90 = dst[0] == 3 && dst[1] == 1 && dst[2] == 4 && dst[3] == 2;
+        if (!rot90) ++orient_fail;
+        printf("%s orientation map+blit\n", orient_fail ? "FAIL" : "PASS");
+    }
+
     ui::Renderer renderer;
     auto shot = [&](const ui::Frame &f, const char *file, const ui::Content &c, const ui::Status &s) {
         renderer.draw(canvas, f, c, s);
@@ -134,6 +159,12 @@ int main(int argc, char **argv)
         f.scan_enter = 1;
         f.countdown = 0.62f;
         shot(f, "05_scan", content, status);
+        renderer.prepare(content);
+        const auto t0 = std::chrono::steady_clock::now();
+        constexpr int kRedraws = 30;
+        for (int i = 0; i < kRedraws; ++i) renderer.draw(canvas, f, content, status);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        printf("scan redraw %.2f ms average over %d (wechat qr cached)\n", ms / kRedraws, kRedraws);
     }
     {
         ui::Content multi = content;
@@ -192,11 +223,10 @@ int main(int argc, char **argv)
         const char *what;
     };
     const Step steps[] = {
-        {1000, ui::Input::KeyB, "blue: card->about"},
-        {1100, ui::Input::KeyB, "blue mid-slide: interrupt back to card"},
+        {1000, ui::Input::KeyB, "blue on card: stays"},
         {3000, ui::Input::KeyA, "yellow: open scan"},
         {5000, ui::Input::Tap, "tap: next qr"},
-        {60000, ui::Input::KeyB, "blue: card->about"},
+        {60000, ui::Input::KeyB, "blue on card: stays"},
         {70000, ui::Input::KeyBLong, "long blue: setup"},
         {80000, ui::Input::KeyBLong, "long blue: leave setup"},
     };
@@ -205,7 +235,7 @@ int main(int argc, char **argv)
     size_t next = 0;
     ui::Page last_page = router.page();
     int failures = 0;
-    int dip_redraws = 0, scan_in_redraws = 0;
+    int dip_redraws = 0, scan_in_redraws = 0, lit_while_drawing = 0;
     for (uint32_t t = 0; t <= 400000; t += 20) {
         const char *event = "";
         if (next < sizeof(steps) / sizeof(steps[0]) && steps[next].t == t) {
@@ -215,7 +245,11 @@ int main(int argc, char **argv)
         }
         const bool redraw = router.tick(t);
         if (redraw && t >= 35000 && t < 35400) ++dip_redraws;
-        if (redraw && t >= 3000 && t < 3300) ++scan_in_redraws;
+        if (redraw && t >= 3000 && t < 3400) ++scan_in_redraws;
+        // The new page must still be dark while it is being drawn.
+        if (redraw && router.page() == ui::Page::Scan && t >= 3000 && t < 3400 && router.brightness() != 0)
+            ++lit_while_drawing;
+        if (redraw) router.presented(t);
         ui::Frame f{};
         router.fill(f);
         if (*event || router.page() != last_page || (router.animating() && t % 100 == 0)) {
@@ -232,23 +266,24 @@ int main(int argc, char **argv)
         };
         expect(2000, ui::Page::Card, 200);
         expect(4000, ui::Page::Scan, 255);
-        expect(1600, ui::Page::Card, 200);    // interrupted slide settles back on the card
+        expect(1600, ui::Page::Card, 200);
         expect(4000, ui::Page::Scan, 255);
         expect(34000, ui::Page::Scan, 255);   // the tap at 5 s restarted the 30 s timeout
         expect(36000, ui::Page::Card, 200);
         expect(59000, ui::Page::Card, 200);   // idle counts from the scan timeout, not the last key
-        expect(61000, ui::Page::About, 200);
+        expect(61000, ui::Page::Card, 200);
         expect(72000, ui::Page::Setup, 200);
         expect(81000, ui::Page::Card, 200);
         expect(124000, ui::Page::Card, 200);
         expect(127000, ui::Page::Ambient, 40); // 45 s after leaving setup
         expect(130000, ui::Page::Ambient, 40);
     }
-    // A fade should cost one redraw at the page switch; the scan entry animates every frame.
-    const bool budget_ok = dip_redraws <= 2 && scan_in_redraws >= 10;
-    printf("%s redraws: scan-close fade=%d, scan-enter=%d\n", budget_ok ? "PASS" : "FAIL", dip_redraws,
-           scan_in_redraws);
+    // Opening and closing the scan page each cost one redraw, done while the panel is dark.
+    const bool budget_ok = dip_redraws <= 2 && scan_in_redraws <= 2 && lit_while_drawing == 0;
+    printf("%s redraws: scan-close fade=%d, scan-open fade=%d, lit while drawing=%d\n", budget_ok ? "PASS" : "FAIL",
+           dip_redraws, scan_in_redraws, lit_while_drawing);
     failures += budget_ok ? 0 : 1;
+    failures += orient_fail ? 1 : 0;
     printf("router checks: %s\n", failures ? "FAIL" : "PASS");
     return failures ? 2 : 0;
 }

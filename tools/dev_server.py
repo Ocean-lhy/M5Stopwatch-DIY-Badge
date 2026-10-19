@@ -36,6 +36,7 @@ DEFAULT_CONFIG = {
     "ambientBrightness": 40,
     "ambientAfter": 45,
     "scanTimeout": 30,
+    "rotation": 0,
     "tz": _profile["tz"],
     "touch": True,
     "about": True,
@@ -48,7 +49,6 @@ LAYER_BITS = {"card": 1, "about": 2, "name": 4, "avatar": 0}
 class Handler(SimpleHTTPRequestHandler):
     out: Path = ROOT / ".cache" / "dev_assets"
     config: dict = json.loads(json.dumps(DEFAULT_CONFIG))
-    scans = 12
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT / "web"), **kwargs)
@@ -70,7 +70,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/state"):
             state = dict(self.config)
-            state["device"] = {"battery": 82, "charging": False, "runtime": 9.6, "scans": self.scans, "ssid": "M5Badge-1A2B",
+            state["device"] = {"battery": 82, "charging": False, "runtime": 9.6, "ssid": "M5Badge-1A2B",
                                "ip": "192.168.4.1", "version": "dev", "timeValid": True}
             return self.send_json(state)
         if self.path.startswith("/avatar.jpg"):

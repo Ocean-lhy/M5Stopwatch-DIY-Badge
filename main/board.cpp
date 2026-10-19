@@ -33,6 +33,7 @@ bool board_init()
     }
     s_pm1_ok = s_pm1.begin(s_bus, M5PM1_DEFAULT_ADDR, 100000) == M5PM1_OK;
     if (!s_pm1_ok) ESP_LOGW(TAG, "PM1 init failed; battery unavailable");
+    else if (s_pm1.setLedEnLevel(false) != M5PM1_OK) ESP_LOGW(TAG, "failed to turn PM1 LED off");
 
     // Stopwatch's PY32 expander uses the second M5IOE1 address.
     s_ioe1_ok = s_ioe1.begin(s_bus, M5IOE1_DEFAULT_ADDR_2, 100000) == M5IOE1_OK;
@@ -49,12 +50,9 @@ bool board_init()
         vTaskDelay(pdMS_TO_TICKS(2));
         s_ioe1.pinMode(M5IOE1_PIN_9, OUTPUT); // PYG9: vibration motor
         s_ioe1.digitalWrite(M5IOE1_PIN_9, LOW);
-        s_ioe1.pinMode(M5IOE1_PIN_4, OUTPUT); // PYG4: CST820 reset
+        // Hold the CST820 in reset so it is never clocked or read.
+        s_ioe1.pinMode(M5IOE1_PIN_4, OUTPUT);
         s_ioe1.digitalWrite(M5IOE1_PIN_4, LOW);
-        vTaskDelay(pdMS_TO_TICKS(10));
-        s_ioe1.digitalWrite(M5IOE1_PIN_4, HIGH);
-        // CST820 needs time to leave reset before its first I2C access.
-        vTaskDelay(pdMS_TO_TICKS(100));
     } else {
         ESP_LOGW(TAG, "IO expander init failed; display rail may be off");
     }

@@ -196,9 +196,61 @@ bool Renderer::encode_qr(const char *text)
                 if (lgfx_qrcode_getModule(&qr, x, y)) qr_bits_[(y * qr_size_ + x) >> 3] |= 1u << ((y * qr_size_ + x) & 7);
         snprintf(qr_key_, sizeof(qr_key_), "%s", text);
         qr_verify_ = true;
+        qr_raster_ok_ = false;
         return true;
     }
     return false;
+}
+
+void Renderer::prepare(const Content &c)
+{
+    if (c.qr_count <= 0 || !c.qr[0].text || !c.qr[0].text[0]) return;
+    if (!encode_qr(c.qr[0].text)) return;
+    const int module = kPlateSize / (qr_size_ + 8) < 2 ? 2 : kPlateSize / (qr_size_ + 8);
+    rasterize_qr(module);
+}
+
+bool Renderer::rasterize_qr(int module)
+{
+    if (qr_size_ <= 0 || module < 1) return false;
+    if (qr_raster_ok_ && qr_raster_module_ == module && qr_raster_size_ == qr_size_ && qr_sprite_.getBuffer())
+        return true;
+    const int pix = qr_size_ * module;
+    if (pix > 320) return false;
+    qr_sprite_.setColorDepth(16);
+    qr_sprite_.setPsram(true);
+    if (!qr_sprite_.createSprite(pix, pix)) {
+        qr_raster_ok_ = false;
+        return false;
+    }
+    qr_sprite_.fillSprite(kPlate);
+    auto *buf = static_cast<uint16_t *>(qr_sprite_.getBuffer());
+    // Probe the stored black so the fill below matches this sprite's byte order.
+    qr_sprite_.drawPixel(0, 0, kScanBg);
+    qr_dark_ = buf[0];
+    qr_sprite_.drawPixel(0, 0, kPlate);
+    for (int row = 0; row < qr_size_; ++row) {
+        for (int sub = 0; sub < module; ++sub) {
+            uint16_t *line = buf + ((size_t)row * module + sub) * pix;
+            int col = 0;
+            while (col < qr_size_) {
+                if (!qr_module(col, row)) {
+                    ++col;
+                    continue;
+                }
+                int run = col + 1;
+                while (run < qr_size_ && qr_module(run, row)) ++run;
+                uint16_t *p = line + col * module;
+                const int count = (run - col) * module;
+                for (int i = 0; i < count; ++i) p[i] = qr_dark_;
+                col = run;
+            }
+        }
+    }
+    qr_raster_module_ = module;
+    qr_raster_size_ = qr_size_;
+    qr_raster_ok_ = true;
+    return true;
 }
 
 void Renderer::draw_qr(lgfx::LGFX_Sprite &dst, int x, int y, int side)
@@ -208,20 +260,32 @@ void Renderer::draw_qr(lgfx::LGFX_Sprite &dst, int x, int y, int side)
     const int module = side / (qr_size_ + 8) < 2 ? 2 : side / (qr_size_ + 8);
     const int ox = x + (side - qr_size_ * module) / 2;
     const int oy = y + (side - qr_size_ * module) / 2;
-    for (int row = 0; row < qr_size_; ++row) {
-        for (int col = 0; col < qr_size_; ++col) {
-            if (qr_module(col, row)) dst.fillRect(ox + col * module, oy + row * module, module, module, kScanBg);
-        }
+    const bool cached = rasterize_qr(module);
+    if (cached) qr_sprite_.pushSprite(&dst, ox, oy);
+    else {
+        for (int row = 0; row < qr_size_; ++row)
+            for (int col = 0; col < qr_size_; ++col)
+                if (qr_module(col, row))
+                    dst.fillRect(ox + col * module, oy + row * module, module, module, kScanBg);
     }
     if (qr_verify_) {
         qr_verify_ = false;
         int bad = 0;
         const int half = module / 2;
-        for (int row = 0; row < qr_size_; ++row) {
-            for (int col = 0; col < qr_size_; ++col) {
-                const bool dark = dst.readPixel(ox + col * module + half, oy + row * module + half) == 0;
-                if (dark != qr_module(col, row)) ++bad;
-            }
+        if (cached) {
+            const auto *buf = static_cast<const uint16_t *>(qr_sprite_.getBuffer());
+            const int pix = qr_size_ * module;
+            for (int row = 0; row < qr_size_; ++row)
+                for (int col = 0; col < qr_size_; ++col) {
+                    const uint16_t p = buf[((size_t)row * module + half) * pix + col * module + half];
+                    if ((p == qr_dark_) != qr_module(col, row)) ++bad;
+                }
+        } else {
+            for (int row = 0; row < qr_size_; ++row)
+                for (int col = 0; col < qr_size_; ++col) {
+                    const bool dark = dst.readPixel(ox + col * module + half, oy + row * module + half) == 0;
+                    if (dark != qr_module(col, row)) ++bad;
+                }
         }
         qr_mismatches_ = bad;
     }

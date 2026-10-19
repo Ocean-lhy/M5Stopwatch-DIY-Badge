@@ -53,7 +53,6 @@ constexpr int kSetupPlateY = 86;
 
 // Motion (ms)
 constexpr int kSlideMs = 260;
-constexpr int kScanInMs = 280;
 constexpr int kDipOutMs = 140;
 constexpr int kDipInMs = 200;
 

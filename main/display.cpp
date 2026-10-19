@@ -1,6 +1,7 @@
 #include "display.h"
 
 #include "driver/gpio.h"
+#include "orient.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "lgfx/v1/panel/Panel_CO5300.hpp"
@@ -106,7 +107,9 @@ public:
 
 static BadgeGFX gfx;
 static M5Canvas canvas(&gfx);
+static lgfx::LGFX_Sprite rotated;
 static uint8_t current_brightness = 0;
+static uint8_t current_rotation = 0;
 
 bool display_init()
 {
@@ -143,12 +146,33 @@ void display_set_brightness(uint8_t value)
 }
 
 uint8_t display_brightness() { return current_brightness; }
+
+void display_set_rotation(uint8_t quarter) { current_rotation = quarter & 3; }
+
 lgfx::LGFX_Sprite &display_canvas() { return canvas; }
 
 void display_present()
 {
     // One transaction per frame so auto-display flushes the whole frame once.
     gfx.startWrite();
-    canvas.pushSprite(0, 0);
+    if (current_rotation == 0) {
+        canvas.pushSprite(0, 0);
+    } else {
+        if (!rotated.getBuffer()) {
+            rotated.setPsram(true);
+            rotated.setColorDepth(16);
+            rotated.createSprite(ui::kSize, ui::kSize);
+            if (!rotated.getBuffer()) ESP_LOGW(TAG, "rotation buffer unavailable");
+        }
+        const auto *src = static_cast<const uint16_t *>(canvas.getBuffer());
+        auto *dst = static_cast<uint16_t *>(rotated.getBuffer());
+        if (src && dst) {
+            orient_blit(src, dst, ui::kSize, current_rotation);
+            // This sprite has no parent; pushSprite(x, y) would dereference a null device.
+            rotated.pushSprite(&gfx, 0, 0);
+        } else {
+            canvas.pushSprite(0, 0);
+        }
+    }
     gfx.endWrite();
 }
