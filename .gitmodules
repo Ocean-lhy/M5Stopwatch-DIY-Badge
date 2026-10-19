@@ -1,0 +1,12 @@
+[submodule "components/M5PM1"]
+	path = components/M5PM1
+	url = git@github.com:m5stack/M5PM1.git
+[submodule "components/M5IOE1"]
+	path = components/M5IOE1
+	url = git@github.com:m5stack/M5IOE1.git
+[submodule "components/ic_rx8130"]
+	path = components/ic_rx8130
+	url = https://github.com/Ocean-lhy/ic_rx8130.git
+[submodule "components/M5GFX"]
+	path = components/M5GFX
+	url = https://github.com/m5stack/M5GFX.git
