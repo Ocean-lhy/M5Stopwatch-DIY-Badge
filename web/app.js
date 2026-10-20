@@ -66,6 +66,16 @@
       resetConfirm: '恢复默认会清空名片、二维码和图层，胸牌回到设置页。继续吗？',
       resetFail: '恢复失败，请重试',
       previewName: '你的名字', noQr: '未设置二维码',
+      powerTitle: '耗电',
+      powerLeft: '剩余', powerMa: '电流', powerMv: '电压', powerUsed: '已用',
+      legendHours: '剩余', legendVolts: '电压',
+      calTitle: '校准',
+      legendFactory: '出厂', legendLearned: '本机',
+      powerEmpty: '暂无记录',
+      powerReset: '清除校准',
+      powerResetConfirm: '清除本机校准，容量回到 450 mAh？',
+      powerResetOk: '已恢复默认',
+      powerResetFail: '清除失败',
     },
     en: {
       title: 'M5 Badge Studio',
@@ -109,6 +119,16 @@
       resetConfirm: 'Restore defaults clears the card, QR codes, and layers, and the badge returns to setup. Continue?',
       resetFail: 'Could not restore defaults. Try again.',
       previewName: 'Your name', noQr: 'No QR code',
+      powerTitle: 'Power',
+      powerLeft: 'Left', powerMa: 'Current', powerMv: 'Voltage', powerUsed: 'Used',
+      legendHours: 'Left', legendVolts: 'Voltage',
+      calTitle: 'Calibration',
+      legendFactory: 'Factory', legendLearned: 'Device',
+      powerEmpty: 'No data',
+      powerReset: 'Clear calibration',
+      powerResetConfirm: 'Clear the device curve and return to 450 mAh?',
+      powerResetOk: 'Restored',
+      powerResetFail: 'Could not clear',
     },
   };
   let lang = localStorage.getItem('m5-lang');
@@ -573,6 +593,196 @@
     $('#devSsid').textContent = d.ssid || '--';
   }
 
+  let powerData = null;
+
+  function cssColor(name, fallback) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+
+  function fitCanvas(canvas, cssH) {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = canvas.clientWidth || 320;
+    canvas.width = Math.max(1, Math.round(w * dpr));
+    canvas.height = Math.max(1, Math.round(cssH * dpr));
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, w, h: cssH };
+  }
+
+  function clockLabel(t) {
+    if (!(t > 1e9)) return '';
+    return new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function drawSeries(ctx, samples, xOf, yOf, color, dash) {
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.75;
+    ctx.setLineDash(dash ? [4, 3] : []);
+    let pen = false;
+    samples.forEach((s, i) => {
+      const y = yOf(s, i);
+      if (y == null) { pen = false; return; }
+      const x = xOf(s, i);
+      if (!pen) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+      pen = true;
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function drawPowerChart(p) {
+    const canvas = $('#powerChart');
+    if (!canvas) return;
+    const { ctx, w, h } = fitCanvas(canvas, 200);
+    ctx.clearRect(0, 0, w, h);
+    const muted = cssColor('--muted', '#73808a');
+    const samples = (p && p.samples) || [];
+    if (samples.length < 2) {
+      ctx.fillStyle = muted;
+      ctx.font = '13px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(tr('powerEmpty'), w / 2, h / 2);
+      return;
+    }
+    const pad = { l: 34, r: 38, t: 14, b: 22 };
+    const plotW = Math.max(1, w - pad.l - pad.r);
+    const plotH = Math.max(1, h - pad.t - pad.b);
+    const timed = samples.filter(s => s.t > 1e9).length > samples.length / 2;
+    const x0 = timed ? samples.find(s => s.t > 1e9).t : 0;
+    const x1 = timed ? samples[samples.length - 1].t : samples.length - 1;
+    const span = Math.max(1, x1 - x0);
+    const xOf = (s, i) => pad.l + (((timed ? (s.t > 1e9 ? s.t : x0) : i) - x0) / span) * plotW;
+    let maxH = 2;
+    samples.forEach(s => { if (!s.charging && s.h > maxH) maxH = s.h; });
+    maxH *= 1.08;
+    const yH = v => pad.t + (1 - Math.min(Math.max(v, 0), maxH) / maxH) * plotH;
+    const yV = mv => pad.t + (1 - (Math.min(4300, Math.max(3400, mv)) - 3400) / 900) * plotH;
+    ctx.strokeStyle = cssColor('--line', '#d8e2eb');
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let g = 0; g <= 4; g++) {
+      const y = pad.t + (g / 4) * plotH;
+      ctx.moveTo(pad.l, y);
+      ctx.lineTo(w - pad.r, y);
+    }
+    ctx.stroke();
+    ctx.fillStyle = muted;
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${maxH.toFixed(0)}h`, pad.l - 4, pad.t + 4);
+    ctx.fillText('0', pad.l - 4, pad.t + plotH);
+    ctx.textAlign = 'left';
+    ctx.fillText('4.3V', w - pad.r + 4, pad.t + 4);
+    ctx.fillText('3.4V', w - pad.r + 4, pad.t + plotH);
+    drawSeries(ctx, samples, xOf, s => (s.charging ? null : yH(s.h)), cssColor('--blue', '#087ac1'), false);
+    drawSeries(ctx, samples, xOf, s => yV(s.mv), cssColor('--ink-2', '#526574'), false);
+    ctx.fillStyle = muted;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    for (let i = 0; i <= 2; i++) {
+      const idx = Math.round((samples.length - 1) * i / 2);
+      const s = samples[idx];
+      ctx.fillText(timed && s.t > 1e9 ? clockLabel(s.t) : `${idx}`, xOf(s, idx), h - 4);
+    }
+  }
+
+  function drawCalChart(p) {
+    const canvas = $('#calChart');
+    if (!canvas || !p) return;
+    const { ctx, w, h } = fitCanvas(canvas, 168);
+    ctx.clearRect(0, 0, w, h);
+    const pad = { l: 36, r: 12, t: 14, b: 22 };
+    const plotW = Math.max(1, w - pad.l - pad.r);
+    const plotH = Math.max(1, h - pad.t - pad.b);
+    const cap = p.capacity_mah > 0 ? p.capacity_mah : 450;
+    const top = cap * 1.05;
+    const xOfMv = mv => pad.l + ((4300 - Math.min(4300, Math.max(3400, mv))) / 900) * plotW;
+    const yOfUsed = used => pad.t + (1 - Math.min(Math.max(used, 0), top) / top) * plotH;
+    const muted = cssColor('--muted', '#73808a');
+    ctx.strokeStyle = cssColor('--line', '#d8e2eb');
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let g = 0; g <= 4; g++) {
+      const y = pad.t + (g / 4) * plotH;
+      ctx.moveTo(pad.l, y);
+      ctx.lineTo(w - pad.r, y);
+    }
+    ctx.stroke();
+    ctx.fillStyle = muted;
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(Math.round(cap)), pad.l - 4, pad.t + 4);
+    ctx.fillText('0', pad.l - 4, pad.t + plotH);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('4.3V', pad.l, h - 4);
+    ctx.fillText('3.4V', w - pad.r, h - 4);
+    const factory = (p.factory_curve || []).map(pt => ({ mv: pt.mv, used: cap * (1 - pt.pct / 100) }));
+    if (factory.length >= 2) {
+      drawSeries(ctx, factory, s => xOfMv(s.mv), s => yOfUsed(s.used), cssColor('--ink-2', '#526574'), true);
+    }
+    const learned = p.learned_curve || [];
+    if (learned.length >= 2) {
+      drawSeries(ctx, learned, s => xOfMv(s.mv), s => yOfUsed(s.used), cssColor('--blue', '#087ac1'), false);
+      ctx.fillStyle = cssColor('--blue', '#087ac1');
+      learned.forEach(s => {
+        ctx.beginPath();
+        ctx.arc(xOfMv(s.mv), yOfUsed(s.used), 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+  }
+
+  function renderPower(p) {
+    if (!p) return;
+    powerData = p;
+    const runtime = $('#pwrRuntime');
+    const unit = $('#pwrRuntimeUnit');
+    if (!runtime) return;
+    if (p.charging || !(p.runtime >= 0)) {
+      runtime.textContent = p.charging ? tr('charging') : '--';
+      if (unit) unit.hidden = true;
+    } else {
+      runtime.textContent = p.runtime >= 99.5 ? '99+' : p.runtime.toFixed(1);
+      if (unit) unit.hidden = false;
+    }
+    $('#pwrMa').textContent = p.ma >= 0 ? Math.round(p.ma) : '--';
+    $('#pwrMv').textContent = p.mv > 0 ? (p.mv / 1000).toFixed(2) : '--';
+    $('#pwrUsed').textContent = p.used_mah >= 0 ? Math.round(p.used_mah) : '--';
+    $('#pwrCapTag').textContent = `${Math.round(p.capacity_mah || 450)} mAh`;
+    const learned = $('#legendLearned');
+    if (learned) learned.hidden = !((p.learned_curve || []).length >= 2);
+    drawPowerChart(p);
+    drawCalChart(p);
+  }
+
+  async function refreshPower() {
+    try { renderPower(await api('/api/power', {}, 5000)); } catch (e) { /* keep the last curve */ }
+  }
+
+  $('#powerReset').addEventListener('click', async () => {
+    if (!confirm(tr('powerResetConfirm'))) return;
+    const btn = $('#powerReset');
+    btn.disabled = true;
+    try {
+      await api('/api/power/reset', { method: 'POST' });
+      await refreshPower();
+      toast(tr('powerResetOk'));
+    } catch (e) {
+      toast(tr('powerResetFail'));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  window.addEventListener('resize', () => { if (powerData) renderPower(powerData); });
+
   // Fills the form once; later polls only refresh telemetry so typing is never overwritten.
   function applyConfig(s) {
     for (const id of TEXT_FIELDS) $('#' + id).value = s[id] || '';
@@ -624,6 +834,7 @@
       applyDevice(s.device);
       setConn('online');
       syncTime();
+      refreshPower();
     } catch (e) {
       applyConfig({});
       setConn('offline');
@@ -641,6 +852,7 @@
         applyDevice(s.device);
         setConn('online');
         if (state.view !== 'scan') drawPreview();
+        refreshPower();
       } catch (e) {
         setConn('offline');
       }
@@ -766,6 +978,7 @@
     setConn(connKind);
     if (pubKey) setPub(pubKey, pubVars);
     if (lastDevice) applyDevice(lastDevice);
+    if (powerData) renderPower(powerData);
     schedulePreview();
   }
 

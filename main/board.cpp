@@ -33,7 +33,21 @@ bool board_init()
     }
     s_pm1_ok = s_pm1.begin(s_bus, M5PM1_DEFAULT_ADDR, 100000) == M5PM1_OK;
     if (!s_pm1_ok) ESP_LOGW(TAG, "PM1 init failed; battery unavailable");
-    else if (s_pm1.setLedEnLevel(false) != M5PM1_OK) ESP_LOGW(TAG, "failed to turn PM1 LED off");
+    else {
+        if (s_pm1.setLedEnLevel(false) != M5PM1_OK) ESP_LOGW(TAG, "failed to turn PM1 LED off");
+        // Same L1 hold as PowerDemo: the power button still shuts the ESP32 down,
+        // but 3V3_L1 stays on so the RX8130 keeps time. The bit clears on shutdown,
+        // so it has to be set again every boot.
+        bool held = false;
+        if (s_pm1.ldoSetPowerHold(true) != M5PM1_OK || s_pm1.ldoGetPowerHold(&held) != M5PM1_OK || !held)
+            ESP_LOGW(TAG, "failed to hold L1 across shutdown");
+        else ESP_LOGI(TAG, "shutdown keeps L1; RTC stays powered");
+        // LGS4056 PROG (PMG3): high is 185 mA, low is 425 mA.
+        if (s_pm1.gpioSet(M5PM1_GPIO_NUM_3, M5PM1_GPIO_MODE_OUTPUT, 0, M5PM1_GPIO_PULL_NONE,
+                          M5PM1_GPIO_DRIVE_PUSHPULL) != M5PM1_OK)
+            ESP_LOGW(TAG, "failed to pull PMG3 low");
+        else ESP_LOGI(TAG, "fast charge on, PMG3 low (425 mA)");
+    }
 
     // Stopwatch's PY32 expander uses the second M5IOE1 address.
     s_ioe1_ok = s_ioe1.begin(s_bus, M5IOE1_DEFAULT_ADDR_2, 100000) == M5IOE1_OK;

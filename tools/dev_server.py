@@ -46,9 +46,64 @@ DEFAULT_CONFIG = {
 LAYER_BITS = {"card": 1, "about": 2, "name": 4, "avatar": 0}
 
 
+FACTORY_CURVE = [
+    {"mv": 4180, "pct": 100}, {"mv": 4100, "pct": 92}, {"mv": 4030, "pct": 84},
+    {"mv": 3970, "pct": 75}, {"mv": 3920, "pct": 66}, {"mv": 3870, "pct": 56},
+    {"mv": 3830, "pct": 46}, {"mv": 3800, "pct": 37}, {"mv": 3770, "pct": 28},
+    {"mv": 3740, "pct": 20}, {"mv": 3700, "pct": 13}, {"mv": 3650, "pct": 7},
+    {"mv": 3580, "pct": 3}, {"mv": 3450, "pct": 0},
+]
+
+
 class Handler(SimpleHTTPRequestHandler):
     out: Path = ROOT / ".cache" / "dev_assets"
     config: dict = json.loads(json.dumps(DEFAULT_CONFIG))
+    cal_cleared = False
+
+    def power_body(self):
+        """Demo trace: voltage sags early, remaining hours fall with used energy."""
+        now = int(time.time())
+        steps = 8 * 12
+        ma = 49.0
+        samples = []
+        for i in range(steps + 1):
+            frac = i / steps
+            if frac < 0.35:
+                mv = int(4160 - 380 * (frac / 0.35))
+            elif frac < 0.8:
+                mv = int(3780 - 90 * ((frac - 0.35) / 0.45))
+            else:
+                mv = int(3690 - 80 * ((frac - 0.8) / 0.2))
+            hours = 9.0 - (9.0 - 0.8) * frac
+            samples.append({
+                "t": now - (steps - i) * 300,
+                "mv": mv,
+                "ma": ma,
+                "h": round(hours, 2),
+                "charging": False,
+            })
+        last = samples[-1]
+        used = 450 - last["h"] * ma
+        learned = not Handler.cal_cleared
+        return {
+            "mv": last["mv"],
+            "ma": ma,
+            "percent": int(round(last["h"] * ma / 450 * 100)),
+            "runtime": last["h"],
+            "charging": False,
+            "used_mah": round(used, 1),
+            "capacity_mah": 450,
+            "motor_mah": 0.02,
+            "learned": learned,
+            "from_full": False,
+            "samples": samples,
+            "learned_curve": [
+                {"mv": 4160, "used": 8}, {"mv": 4050, "used": 35}, {"mv": 3950, "used": 70},
+                {"mv": 3870, "used": 120}, {"mv": 3800, "used": 190}, {"mv": 3740, "used": 270},
+                {"mv": 3680, "used": 340}, {"mv": 3600, "used": 410},
+            ] if learned else [],
+            "factory_curve": FACTORY_CURVE,
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT / "web"), **kwargs)
@@ -70,9 +125,13 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/state"):
             state = dict(self.config)
-            state["device"] = {"battery": 82, "charging": False, "runtime": 9.6, "ssid": "M5Badge-1A2B",
+            power = self.power_body()
+            state["device"] = {"battery": power["percent"], "charging": power["charging"],
+                               "runtime": power["runtime"], "ssid": "M5Badge-1A2B",
                                "ip": "192.168.4.1", "version": "dev", "timeValid": True}
             return self.send_json(state)
+        if self.path.startswith("/api/power"):
+            return self.send_json(self.power_body())
         if self.path.startswith("/avatar.jpg"):
             path = self.out / "avatar.jpg"
             if not path.exists():
@@ -111,6 +170,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"ok": True})
         if self.path == "/api/reset":
             Handler.config = json.loads(json.dumps(DEFAULT_CONFIG))
+            return self.send_json({"ok": True})
+        if self.path == "/api/power/reset":
+            self.body()
+            Handler.cal_cleared = True
             return self.send_json({"ok": True})
         return self.send_json({"ok": False, "message": "not found"}, 404)
 

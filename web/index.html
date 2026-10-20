@@ -88,6 +88,27 @@
           </div>
         </section>
 
+        <section class="step" id="powerCard">
+          <header><span class="num">5</span><div class="power-head"><h2 data-i18n="powerTitle">耗电</h2><button id="powerReset" class="link-danger" type="button" data-i18n="powerReset">清除校准</button></div></header>
+          <div class="meters">
+            <div><small data-i18n="powerLeft">剩余</small><div class="read"><b id="pwrRuntime">--</b><span class="unit" id="pwrRuntimeUnit">h</span></div></div>
+            <div><small data-i18n="powerMa">电流</small><div class="read"><b id="pwrMa">--</b><span class="unit">mA</span></div></div>
+            <div><small data-i18n="powerMv">电压</small><div class="read"><b id="pwrMv">--</b><span class="unit">V</span></div></div>
+            <div><small data-i18n="powerUsed">已用</small><div class="read"><b id="pwrUsed">--</b><span class="unit">mAh</span></div><small id="pwrCapTag"></small></div>
+          </div>
+          <div class="chart-wrap"><canvas id="powerChart" width="640" height="200" aria-hidden="true"></canvas></div>
+          <p class="chart-legend">
+            <span><i class="swatch hours"></i><span data-i18n="legendHours">剩余</span></span>
+            <span><i class="swatch volts"></i><span data-i18n="legendVolts">电压</span></span>
+          </p>
+          <h3 data-i18n="calTitle">校准</h3>
+          <div class="chart-wrap"><canvas id="calChart" width="640" height="168" aria-hidden="true"></canvas></div>
+          <p class="chart-legend">
+            <span><i class="swatch factory"></i><span data-i18n="legendFactory">出厂</span></span>
+            <span id="legendLearned"><i class="swatch hours"></i><span data-i18n="legendLearned">本机</span></span>
+          </p>
+        </section>
+
         <section class="guide">
           <h2 data-i18n="keys">按键</h2>
           <dl>

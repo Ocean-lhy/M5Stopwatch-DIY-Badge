@@ -23,6 +23,7 @@
 #include "freertos/semphr.h"
 #include "layers.h"
 #include "nvs.h"
+#include "power.h"
 #include "rtc_time.h"
 #include "web_assets.h"
 
@@ -159,6 +160,7 @@ static esp_err_t redirect_handler(httpd_req_t *req)
     touch_activity();
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", kPortalUri);
+    httpd_resp_set_hdr(req, "Connection", "close");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, nullptr, 0);
 }
@@ -166,6 +168,16 @@ static esp_err_t redirect_handler(httpd_req_t *req)
 static esp_err_t not_found_handler(httpd_req_t *req, httpd_err_code_t)
 {
     if (strncmp(req->uri, "/api/", 5) == 0) return send_error(req, "404 Not Found", "not found");
+    // WeChat keeps probing /mmtls while the phone is on the AP. Redirecting each
+    // one makes it open yet another connection to the editor and crowds out the
+    // system captive-portal check.
+    if (strncmp(req->uri, "/mmtls/", 7) == 0) {
+        httpd_resp_set_status(req, "404 Not Found");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_set_hdr(req, "Connection", "close");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        return httpd_resp_send(req, "", 0);
+    }
     return redirect_handler(req);
 }
 
@@ -191,6 +203,74 @@ static esp_err_t state_handler(httpd_req_t *req)
     esp_err_t err = send_json(req, "200 OK", text ? text : "{}");
     free(text);
     return err;
+}
+
+static esp_err_t power_handler(httpd_req_t *req)
+{
+    touch_activity();
+    const PowerState st = power_state();
+    PowerSample *samples = static_cast<PowerSample *>(calloc(kPowerHistoryCap, sizeof(PowerSample)));
+    PowerUsedPoint *learned = static_cast<PowerUsedPoint *>(calloc(kPowerCurveCap, sizeof(PowerUsedPoint)));
+    PowerVoltPoint factory[16];
+    const int n_s = samples ? power_copy_samples(samples, kPowerHistoryCap) : 0;
+    const int n_l = learned ? power_copy_learned(learned, kPowerCurveCap) : 0;
+    const int n_f = power_copy_factory(factory, 16);
+
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        free(samples);
+        free(learned);
+        return send_error(req, "500 Internal Server Error", "oom");
+    }
+    cJSON_AddNumberToObject(root, "mv", st.mv);
+    cJSON_AddNumberToObject(root, "ma", st.load_ma);
+    cJSON_AddNumberToObject(root, "percent", st.percent);
+    cJSON_AddNumberToObject(root, "runtime", st.runtime_h);
+    cJSON_AddBoolToObject(root, "charging", st.charging);
+    cJSON_AddNumberToObject(root, "used_mah", st.used_mah);
+    cJSON_AddNumberToObject(root, "capacity_mah", st.capacity_mah);
+    cJSON_AddNumberToObject(root, "motor_mah", st.motor_mah);
+    cJSON_AddBoolToObject(root, "learned", st.learned);
+    cJSON_AddBoolToObject(root, "from_full", st.from_full);
+
+    cJSON *arr = cJSON_AddArrayToObject(root, "samples");
+    for (int i = 0; i < n_s; ++i) {
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddNumberToObject(item, "t", samples[i].t);
+        cJSON_AddNumberToObject(item, "mv", samples[i].mv);
+        cJSON_AddNumberToObject(item, "ma", samples[i].ma_x10 / 10.0);
+        cJSON_AddNumberToObject(item, "h", samples[i].remain_x10 / 10.0);
+        cJSON_AddBoolToObject(item, "charging", samples[i].charging);
+        cJSON_AddItemToArray(arr, item);
+    }
+    cJSON *curve = cJSON_AddArrayToObject(root, "learned_curve");
+    for (int i = 0; i < n_l; ++i) {
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddNumberToObject(item, "mv", learned[i].mv);
+        cJSON_AddNumberToObject(item, "used", learned[i].used_x10 / 10.0);
+        cJSON_AddItemToArray(curve, item);
+    }
+    cJSON *fac = cJSON_AddArrayToObject(root, "factory_curve");
+    for (int i = 0; i < n_f; ++i) {
+        cJSON *item = cJSON_CreateObject();
+        cJSON_AddNumberToObject(item, "mv", factory[i].mv);
+        cJSON_AddNumberToObject(item, "pct", factory[i].pct);
+        cJSON_AddItemToArray(fac, item);
+    }
+    char *text = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    free(samples);
+    free(learned);
+    esp_err_t err = send_json(req, "200 OK", text ? text : "{}");
+    free(text);
+    return err;
+}
+
+static esp_err_t power_reset_handler(httpd_req_t *req)
+{
+    touch_activity();
+    power_clear_calibration();
+    return send_json(req, "200 OK", "{\"ok\":true}");
 }
 
 static void apply_time(const cJSON *root)
@@ -452,10 +532,19 @@ static bool start_http()
     cfg.max_uri_handlers = WEB_ASSET_COUNT + 20;
     cfg.stack_size = 8192;
     cfg.lru_purge_enable = true;
+    // httpd reserves 3 sockets besides max_open_sockets, and DNS takes one more.
+    // With the old CONFIG_LWIP_MAX_SOCKETS=10 that left nothing for the phone's
+    // parallel captive probes, so accept() failed with ENFILE (23) and the
+    // system sign-in window never appeared.
     cfg.max_open_sockets = 7;
+    cfg.backlog_conn = 4;
+    cfg.recv_wait_timeout = 2;
+    cfg.send_wait_timeout = 2;
     if (httpd_start(&g_server, &cfg) != ESP_OK) return false;
     for (size_t i = 0; i < WEB_ASSET_COUNT; ++i) register_get(WEB_ASSETS[i].path, asset_handler, (void *)&WEB_ASSETS[i]);
     register_get("/api/state", state_handler);
+    register_get("/api/power", power_handler);
+    register_post("/api/power/reset", power_reset_handler);
     register_get("/avatar.jpg", avatar_handler);
     register_post("/api/config", config_handler);
     register_post("/api/time", time_handler);

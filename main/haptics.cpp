@@ -1,6 +1,7 @@
 #include "haptics.h"
 
 #include "board.h"
+#include "power.h"
 
 namespace {
 
@@ -12,13 +13,16 @@ const uint16_t *s_steps = nullptr;
 int s_count = 0;
 int s_index = 0;
 uint32_t s_step_start = 0;
+uint32_t s_on_at = 0;
 bool s_on = false;
 
-void motor(bool on)
+void motor(bool on, uint32_t now)
 {
     if (s_on == on) return;
+    if (s_on) power_note_motor(now - s_on_at);
     if (M5IOE1 *io = board_ioe1()) io->digitalWrite(M5IOE1_PIN_9, on ? HIGH : LOW);
     s_on = on;
+    s_on_at = on ? now : 0;
 }
 
 } // namespace
@@ -32,7 +36,7 @@ void haptics_play(ui::Haptic pattern, uint32_t now_ms)
     }
     s_index = 0;
     s_step_start = now_ms;
-    motor(true);
+    motor(true, now_ms);
 }
 
 void haptics_update(uint32_t now_ms)
@@ -43,9 +47,9 @@ void haptics_update(uint32_t now_ms)
         ++s_index;
     }
     if (s_index >= s_count) {
-        motor(false);
+        motor(false, now_ms);
         s_steps = nullptr;
         return;
     }
-    motor((s_index % 2) == 0);
+    motor((s_index % 2) == 0, now_ms);
 }
