@@ -52,4 +52,5 @@ int power_copy_samples(PowerSample *out, int max);
 int power_copy_learned(PowerUsedPoint *out, int max);
 int power_copy_factory(PowerVoltPoint *out, int max);
 // Drops the learned voltage curve and capacity. History samples stay.
-void power_clear_calibration();
+// Returns false when the reset could not be persisted to NVS.
+bool power_clear_calibration();

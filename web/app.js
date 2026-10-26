@@ -773,6 +773,7 @@
     try {
       await api('/api/power/reset', { method: 'POST' });
       await refreshPower();
+      try { applyDevice((await api('/api/state', {}, 5000)).device); } catch (e) { /* power card is already refreshed */ }
       toast(tr('powerResetOk'));
     } catch (e) {
       toast(tr('powerResetFail'));

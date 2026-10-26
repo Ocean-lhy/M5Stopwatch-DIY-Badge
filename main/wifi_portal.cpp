@@ -269,7 +269,7 @@ static esp_err_t power_handler(httpd_req_t *req)
 static esp_err_t power_reset_handler(httpd_req_t *req)
 {
     touch_activity();
-    power_clear_calibration();
+    if (!power_clear_calibration()) return send_error(req, "500 Internal Server Error", "save failed");
     return send_json(req, "200 OK", "{\"ok\":true}");
 }
 

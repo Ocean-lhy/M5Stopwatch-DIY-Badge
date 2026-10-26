@@ -6,6 +6,7 @@
 #include "board.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "nvs.h"
 
 namespace {
@@ -32,9 +33,12 @@ constexpr float kWifiMa = 69.4f;
 // on VBAT; the web page shows the mAh it actually adds.
 constexpr float kMotorMa = 90.0f;
 // LGS4056 PROG is PMG3. The board pulls it low at boot, selecting 425 mA.
-// 0.7 leaves room for CV taper, so a charge is not marked full early.
+// CC is credited at its full measured current; CV taper is estimated from the
+// terminal voltage and the charge is then re-anchored when the full hold ends.
 constexpr float kChargeMa = 425.0f;
-constexpr float kChargeFactor = 0.7f;
+constexpr float kChargeTaperStartMv = 4100.0f;
+constexpr float kChargeTaperEndMv = 4180.0f;
+constexpr float kChargeTaperMin = 0.2f;
 constexpr float kAverageWindowS = 900.0f;
 constexpr float kFullMv = 4100.0f;
 constexpr float kLatchMv = 4120.0f;
@@ -43,6 +47,12 @@ constexpr float kEmptyMv = 3450.0f;
 constexpr float kContinueMv = 150.0f;
 constexpr float kTraceStepMv = 25.0f;
 constexpr time_t kMinValid = 1704067200;
+constexpr int32_t kLongRestS = 6 * 60 * 60;
+constexpr float kRestReanchorMah = 90.0f;
+constexpr float kHighConflictMah = 120.0f;
+constexpr uint8_t kFlagFromFull = 1 << 0;
+constexpr uint8_t kFlagLearned = 1 << 1;
+constexpr uint8_t kFlagFullLatched = 1 << 2;
 
 struct CurvePoint {
     uint16_t mv;
@@ -110,6 +120,7 @@ bool s_dirty = false;
 bool s_force_sample = false;
 bool s_full_latched = false;
 bool s_announce_learn = false;
+bool s_seed_reanchored = false;
 uint32_t s_next_read = 0;
 uint32_t s_last_load = 0;
 uint32_t s_last_integrate = 0;
@@ -118,6 +129,7 @@ uint32_t s_last_save = 0;
 uint32_t s_full_since = 0;
 uint32_t s_unplug_at = 0;
 uint16_t s_last_mv = 0;
+int32_t s_saved_at = 0;
 int s_curve_n = 0;
 int s_trace_n = 0;
 int s_sample_n = 0;
@@ -179,17 +191,64 @@ float used_from_mv(float mv)
     return s_capacity * (100 - percent_from_mv(mv)) / 100.0f;
 }
 
+float charge_acceptance(float mv)
+{
+    if (mv <= kChargeTaperStartMv) return 1.0f;
+    if (mv >= kChargeTaperEndMv) return kChargeTaperMin;
+    const float t = (mv - kChargeTaperStartMv) / (kChargeTaperEndMv - kChargeTaperStartMv);
+    return 1.0f + t * (kChargeTaperMin - 1.0f);
+}
+
+bool rest_seconds(int32_t *seconds)
+{
+    const int32_t now = wall_time();
+    if (!seconds || now == 0 || s_saved_at < kMinValid || now < s_saved_at) return false;
+    *seconds = now - s_saved_at;
+    return true;
+}
+
+void push_trace(float mv, float used);
+
+// A coulomb count can survive a reboot, but it must not survive a stale/full
+// voltage contradiction. Re-anchor only in clear conflicts so ordinary voltage
+// sag under load is not mistaken for a new battery session.
+bool reconcile_voltage()
+{
+    if (s_state.charging || !s_trusted || s_filtered < 2500.0f) return false;
+    const float estimate = used_from_mv(s_filtered);
+    const bool coulomb_empty = s_used >= s_capacity && s_filtered > kEmptyMv + 50.0f;
+    const bool high_while_empty = s_filtered >= 4000.0f && s_used >= s_capacity * 0.75f;
+    const bool high_estimate_conflict = s_filtered >= 3980.0f && s_used > estimate + kHighConflictMah;
+    const bool full_but_used = s_filtered >= kLatchMv && s_used > estimate + 12.0f;
+    if (!coulomb_empty && !high_while_empty && !high_estimate_conflict && !full_but_used) return false;
+
+    s_used = estimate;
+    s_from_full = s_used < 8.0f;
+    s_full_latched = false;
+    s_settle = false;
+    s_trace_n = 0;
+    if (s_from_full) push_trace(s_filtered, s_used);
+    s_dirty = true;
+    return true;
+}
+
 void publish()
 {
+    if (!s_seeded || !s_trusted || s_state.charging) {
+        s_state.used_mah = s_used;
+        s_state.capacity_mah = s_capacity;
+        s_state.motor_mah = s_motor;
+        s_state.learned = s_learned;
+        s_state.from_full = s_from_full;
+        s_state.runtime_h = -1;
+        return;
+    }
+    reconcile_voltage();
     s_state.used_mah = s_used;
     s_state.capacity_mah = s_capacity;
     s_state.motor_mah = s_motor;
     s_state.learned = s_learned;
     s_state.from_full = s_from_full;
-    if (!s_seeded || !s_trusted || s_state.charging) {
-        s_state.runtime_h = -1;
-        return;
-    }
     float remain = s_capacity - s_used;
     if (remain < 0) remain = 0;
     if (s_filtered >= 2500 && s_filtered <= kEmptyMv) remain = 0;
@@ -307,8 +366,10 @@ void load_persist()
     if (s_capacity < kMinCapacity || s_capacity > kMaxCapacity) s_capacity = kCapacityMah;
     s_motor = s_save.motor_x100 / 100.0f;
     s_last_mv = s_save.last_mv;
-    s_from_full = (s_save.flags & 1) != 0;
-    s_learned = (s_save.flags & 2) != 0;
+    s_saved_at = s_save.session_t;
+    s_from_full = (s_save.flags & kFlagFromFull) != 0;
+    s_learned = (s_save.flags & kFlagLearned) != 0;
+    s_full_latched = (s_save.flags & kFlagFullLatched) != 0;
     s_curve_n = s_save.curve_n;
     s_trace_n = s_save.trace_n;
     if (s_learned && s_curve_n < 2) s_learned = false;
@@ -320,8 +381,8 @@ void load_persist()
     s_sample_head = s_save.sample_head;
     memcpy(s_samples, s_save.samples, sizeof(s_samples));
     s_loaded = true;
-    ESP_LOGI(TAG, "restored used=%d cap=%d samples=%d", (int)(s_used + 0.5f), (int)(s_capacity + 0.5f),
-             s_sample_n);
+    ESP_LOGI(TAG, "restored used=%d cap=%d samples=%d saved_at=%ld", (int)(s_used + 0.5f),
+             (int)(s_capacity + 0.5f), s_sample_n, (long)s_saved_at);
 }
 
 void pack(Persist *out)
@@ -332,12 +393,14 @@ void pack(Persist *out)
     out->capacity_x10 = sat_u16(s_capacity * 10.0f);
     out->motor_x100 = sat_u16(s_motor * 100.0f);
     out->last_mv = s_filtered >= 2500 ? sat_u16(s_filtered) : s_last_mv;
-    out->flags = (uint8_t)((s_from_full ? 1 : 0) | (s_learned ? 2 : 0));
+    out->flags = (uint8_t)((s_from_full ? kFlagFromFull : 0) | (s_learned ? kFlagLearned : 0) |
+                           (s_full_latched ? kFlagFullLatched : 0));
     out->curve_n = (uint8_t)s_curve_n;
     out->trace_n = (uint8_t)s_trace_n;
     out->sample_n = (uint8_t)s_sample_n;
     out->sample_head = (uint8_t)s_sample_head;
-    out->session_t = wall_time();
+    const int32_t now = wall_time();
+    out->session_t = now ? now : s_saved_at;
     for (int i = 0; i < s_curve_n; ++i) {
         out->curve[i].mv = s_curve[i].mv;
         out->curve[i].used_x10 = sat_u16(s_curve[i].used * 10.0f);
@@ -349,54 +412,93 @@ void pack(Persist *out)
     memcpy(out->samples, s_samples, sizeof(s_samples));
 }
 
-void maybe_save(uint32_t now, bool force)
+SemaphoreHandle_t save_mutex()
 {
-    if (!s_seeded) return;
-    if (!force && !s_dirty) return;
-    if (!force && s_last_save && (uint32_t)(now - s_last_save) < kSaveMs) return;
+    static StaticSemaphore_t storage;
+    static SemaphoreHandle_t mutex = xSemaphoreCreateMutexStatic(&storage);
+    return mutex;
+}
+
+bool maybe_save(uint32_t now, bool force)
+{
+    SemaphoreHandle_t lock = save_mutex();
+    if (!lock || xSemaphoreTake(lock, portMAX_DELAY) != pdTRUE) return false;
+
+    Persist snapshot{};
     portENTER_CRITICAL(&s_mux);
-    pack(&s_save);
+    if ((!s_seeded && !force) || (!force && !s_dirty) ||
+        (!force && s_last_save && (uint32_t)(now - s_last_save) < kSaveMs)) {
+        portEXIT_CRITICAL(&s_mux);
+        xSemaphoreGive(lock);
+        return true;
+    }
+    pack(&snapshot);
     s_dirty = false;
     portEXIT_CRITICAL(&s_mux);
 
     nvs_handle_t handle = 0;
-    if (nvs_open("power", NVS_READWRITE, &handle) != ESP_OK) {
-        s_dirty = true;
-        return;
+    esp_err_t err = nvs_open("power", NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        err = nvs_set_blob(handle, "log", &snapshot, sizeof(snapshot));
+        if (err == ESP_OK) err = nvs_commit(handle);
+        nvs_close(handle);
     }
-    esp_err_t err = nvs_set_blob(handle, "log", &s_save, sizeof(s_save));
-    if (err == ESP_OK) err = nvs_commit(handle);
-    nvs_close(handle);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "nvs save failed: %s", esp_err_to_name(err));
+        portENTER_CRITICAL(&s_mux);
         s_dirty = true;
-        return;
+        portEXIT_CRITICAL(&s_mux);
+        xSemaphoreGive(lock);
+        return false;
     }
+
+    portENTER_CRITICAL(&s_mux);
+    s_saved_at = snapshot.session_t;
+    portEXIT_CRITICAL(&s_mux);
     s_last_save = now;
+    xSemaphoreGive(lock);
+    return true;
 }
 
 void seed(float mv, bool charging)
 {
     float delta = mv > s_last_mv ? mv - s_last_mv : s_last_mv - mv;
-    bool cont = s_loaded && s_last_mv >= 2500 && delta < kContinueMv;
+    int32_t rested_s = 0;
+    const bool rest_known = rest_seconds(&rested_s);
+    const float estimate = used_from_mv(mv);
+    const bool coulomb_empty = s_used >= s_capacity && mv > kEmptyMv + 50.0f;
+    const bool high_while_empty = mv >= 4000.0f && s_used >= s_capacity * 0.75f;
+    const bool high_estimate_conflict = mv >= 3980.0f && s_used > estimate + kHighConflictMah;
+    const bool full_but_used = mv >= kLatchMv && s_used > 12.0f;
+    const float estimate_delta = s_used > estimate ? s_used - estimate : estimate - s_used;
+    const bool long_rest_conflict = rest_known && rested_s >= kLongRestS &&
+                                    estimate_delta > kRestReanchorMah;
+    const bool recovered_while_off = rest_known && rested_s >= 2 * 60 * 60 && mv >= 3950.0f &&
+                                     mv > s_last_mv + 80.0f && s_used > estimate + 60.0f;
+    const bool cont = s_loaded && s_last_mv >= 2500 && delta < kContinueMv && !coulomb_empty &&
+                      !high_while_empty && !high_estimate_conflict && !full_but_used &&
+                      !long_rest_conflict && !recovered_while_off;
     if (cont) {
         // Same discharge, including a reboot. The integral already in NVS stays.
         s_trusted = true;
     } else if (charging) {
         // Charger voltage sits above the resting curve. Don't treat it as full
         // until it has held 4.12 V, or until 30 s after unplug.
-        s_used = used_from_mv(mv);
+        s_used = estimate;
         s_from_full = false;
         s_trusted = false;
+        s_trace_n = 0;
     } else {
-        s_used = used_from_mv(mv);
+        s_used = estimate;
         s_from_full = s_used < 8.0f;
         s_trusted = true;
+        s_trace_n = 0;
         if (s_from_full) {
-            s_trace_n = 0;
             push_trace(mv, s_used);
         }
     }
+    if (!charging) s_full_latched = false;
+    s_seed_reanchored = !cont && s_loaded;
     s_seeded = true;
     s_last_integrate = 0;
     s_dirty = true;
@@ -408,8 +510,8 @@ void finish_settle()
     s_from_full = s_used < 8.0f;
     s_trusted = true;
     s_settle = false;
+    s_trace_n = 0;
     if (s_from_full) {
-        s_trace_n = 0;
         push_trace(s_filtered, s_used);
     }
     s_force_sample = true;
@@ -451,14 +553,28 @@ void on_plug()
     s_dirty = true;
 }
 
-void note_full_hold(uint32_t now, bool charging, float mv)
+bool note_full_hold(uint32_t now, bool charging, float mv)
 {
     if (charging && mv >= kLatchMv) {
         if (!s_full_since) s_full_since = now ? now : 1;
-        else if ((uint32_t)(now - s_full_since) >= kFullHoldMs) s_full_latched = true;
+        else if ((uint32_t)(now - s_full_since) >= kFullHoldMs && !s_full_latched) {
+            // This is the charge endpoint anchor. Re-anchor immediately so a
+            // near-full or fully charged pack cannot keep a stale non-zero count.
+            s_full_latched = true;
+            s_used = 0;
+            s_from_full = true;
+            s_trusted = true;
+            s_settle = false;
+            s_trace_n = 0;
+            push_trace(mv, 0);
+            s_force_sample = true;
+            s_dirty = true;
+            return true;
+        }
     } else {
         s_full_since = 0;
     }
+    return false;
 }
 
 void integrate(uint32_t now, float ma)
@@ -476,16 +592,12 @@ void integrate(uint32_t now, float ma)
         // Charger current is shared with the board. Anything above it still comes from the cell.
         if (ma >= kChargeMa) s_used += (ma - kChargeMa) * dt_h;
         else {
-            s_used -= (kChargeMa - ma) * kChargeFactor * dt_h;
+            s_used -= (kChargeMa - ma) * charge_acceptance(s_filtered) * dt_h;
             if (s_used < 0) s_used = 0;
         }
         return;
     }
     s_used += ma * dt_h;
-    if (s_used >= s_capacity && s_filtered > 3680) {
-        s_capacity = s_used + 15.0f;
-        if (s_capacity > kMaxCapacity) s_capacity = kMaxCapacity;
-    }
 }
 
 void smooth(uint32_t now, float ma)
@@ -573,15 +685,17 @@ void power_update(uint32_t now)
     if (!s_seeded) {
         seed(s_filtered, charging);
         s_state.charging = charging;
+        publish();
         if (charging) s_state.percent = percent_from_mv(s_filtered);
-        else publish();
         note_full_hold(now, charging, s_filtered);
         int used_i = (int)(s_used + 0.5f);
         int cap_i = (int)(s_capacity + 0.5f);
         bool learned = s_learned;
         bool full = s_from_full;
+        bool reanchored = s_seed_reanchored;
         portEXIT_CRITICAL(&s_mux);
-        ESP_LOGI(TAG, "seed mv=%d used=%d cap=%d learned=%d full=%d", (int)mv, used_i, cap_i, learned, full);
+        ESP_LOGI(TAG, "seed mv=%d used=%d cap=%d learned=%d full=%d reanchored=%d", (int)mv, used_i,
+                 cap_i, learned, full, reanchored);
         maybe_save(now, true);
         return;
     }
@@ -592,7 +706,7 @@ void power_update(uint32_t now)
         else if (!was && charging) on_plug();
     }
     s_state.charging = charging;
-    note_full_hold(now, charging, s_filtered);
+    bool full_anchored = note_full_hold(now, charging, s_filtered);
     if (charging || !s_trusted) {
         int pct = percent_from_mv(s_filtered);
         if (charging && s_state.percent >= 0 && pct < s_state.percent) pct = s_state.percent;
@@ -613,7 +727,8 @@ void power_update(uint32_t now)
     s_announce_learn = false;
     portEXIT_CRITICAL(&s_mux);
     if (announce) ESP_LOGI(TAG, "learned points=%d cap=%d", points, cap_i);
-    maybe_save(now, false);
+    if (full_anchored) ESP_LOGI(TAG, "charge full anchor: used reset to 0");
+    maybe_save(now, full_anchored);
 }
 
 PowerState power_state()
@@ -658,19 +773,31 @@ int power_copy_factory(PowerVoltPoint *out, int max)
     return n;
 }
 
-void power_clear_calibration()
+bool power_clear_calibration()
 {
     portENTER_CRITICAL(&s_mux);
     s_learned = false;
     s_curve_n = 0;
     s_trace_n = 0;
-    s_from_full = false;
     s_announce_learn = false;
+    s_full_latched = false;
+    s_full_since = 0;
+    s_settle = false;
     s_capacity = kCapacityMah;
     if (s_filtered >= 2500.0f) {
         s_used = used_from_mv(s_filtered);
         s_seeded = true;
-        if (!s_state.charging) s_trusted = true;
+        s_trusted = !s_state.charging;
+        s_from_full = s_trusted && s_used < 8.0f;
+        if (s_from_full) push_trace(s_filtered, s_used);
+    } else {
+        s_used = 0;
+        s_seeded = false;
+        s_trusted = false;
+        s_from_full = false;
+        s_state.percent = -1;
+        s_state.runtime_h = -1;
+        s_state.mv = 0;
     }
     s_dirty = true;
     if (s_state.charging || !s_trusted) {
@@ -684,6 +811,8 @@ void power_clear_calibration()
         publish();
     }
     portEXIT_CRITICAL(&s_mux);
-    maybe_save(0, true);
-    ESP_LOGI(TAG, "calibration cleared");
+    const bool saved = maybe_save(0, true);
+    if (saved) ESP_LOGI(TAG, "calibration cleared");
+    else ESP_LOGE(TAG, "calibration cleared in RAM but NVS save failed");
+    return saved;
 }
